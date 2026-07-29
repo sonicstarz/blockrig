@@ -212,6 +212,76 @@ if(NAMMODELER_BUILD_TESTS)
         juce::juce_dsp
         juce::juce_recommended_config_flags)
 
+    # Plug-in scanning tests. This binary is both coordinator and scanner child:
+    # the coordinator relaunches it with the scanner UID, which is exactly the
+    # shipping arrangement, so crash containment is really exercised.
+    juce_add_console_app(scan_tests PRODUCT_NAME "scan_tests")
+
+    target_sources(scan_tests PRIVATE
+        tests/scan_tests.cpp
+        src/host/PluginCatalog.cpp
+        src/host/PluginScannerWorker.cpp
+        src/host/InternalBlockFormat.cpp
+        src/blocks/nam/NamBlockProcessor.cpp
+        src/dsp/AmpSlot.cpp
+        src/dsp/ToneStack.cpp
+        src/dsp/ResamplingNam.cpp
+        src/dsp/ModelLoader.cpp
+        src/state/PluginState.cpp)
+
+    target_include_directories(scan_tests PRIVATE src)
+
+    target_compile_definitions(scan_tests PRIVATE
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+
+    target_link_libraries(scan_tests PRIVATE
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_dsp
+        juce::juce_recommended_config_flags)
+
+    # Rig save/restore against the real host processor.
+    juce_add_console_app(rig_tests PRODUCT_NAME "rig_tests")
+
+    target_sources(rig_tests PRIVATE
+        tests/rig_tests.cpp
+        src/BlockRigProcessor.cpp
+        src/state/RigState.cpp
+        src/host/BlockChain.cpp
+        src/host/BlockInstance.cpp
+        src/host/PluginCatalog.cpp
+        src/host/PluginScannerWorker.cpp
+        src/host/InternalBlockFormat.cpp
+        src/blocks/nam/NamBlockProcessor.cpp
+        src/dsp/AmpSlot.cpp
+        src/dsp/ToneStack.cpp
+        src/dsp/ResamplingNam.cpp
+        src/dsp/ModelLoader.cpp
+        src/state/PluginState.cpp)
+
+    target_include_directories(rig_tests PRIVATE src)
+
+    target_compile_definitions(rig_tests PRIVATE
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+
+    target_link_libraries(rig_tests PRIVATE
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_dsp
+        juce::juce_recommended_config_flags)
+
     # P0 de-risk spike: proves plugin hosting works and measures its cost.
     # Throwaway once the real host engine lands (docs/16-BUILD-PLAN.md P0).
     juce_add_console_app(host_spike PRODUCT_NAME "host_spike")
@@ -254,4 +324,15 @@ if(NAMMODELER_BUILD_TESTS)
              COMMAND plugin_tests "${NAM_CORE_DIR}/example_models")
     add_test(NAME chain_tests
              COMMAND chain_tests "${NAM_CORE_DIR}/example_models")
+    add_test(NAME rig_tests
+             COMMAND rig_tests "${NAM_CORE_DIR}/example_models")
+
+    # scan_tests is deliberately NOT in the default set: it scans every plug-in
+    # on the machine out-of-process and takes minutes. Run it directly as a soak
+    # test after touching anything in host/PluginCatalog or PluginScannerWorker.
+    add_test(NAME scan_tests COMMAND scan_tests)
+    set_tests_properties(scan_tests PROPERTIES
+        LABELS "soak"
+        TIMEOUT 1800
+        DISABLED TRUE)
 endif()

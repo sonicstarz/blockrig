@@ -78,7 +78,11 @@ Copy the AudioPluginHost reference wholesale, plus the missing watchdog:
 
 - Relaunch our own executable with a scanner UID (`ChildProcessWorker` in `ScannerSubprocess`); coordinator side implements `KnownPluginList::CustomScanner`; **out-of-process is the only mode we ship** (in-process scanning is a debug flag).
 - Dead-man's-pedal file + `applyBlacklistingsFromDeadMansPedal` + denylist UI (`PluginListComponent` handles display; we restyle it).
-- **Watchdog: kill the child after 60 s per plugin**, denylist the hang, move on (Element's lesson; iZotope Trash and Harrison Microglide are known offenders). Persist the plugin list after every successful probe.
+- **Watchdog, in two halves — both are required** (60 s per plugin by default):
+  - *Coordinator side*: give each probe a deadline; on expiry drop the child, denylist the plugin, move on. This is what unblocks the scan (JUCE's example has no deadline and spins forever).
+  - *Child side*: the child runs its own watchdog thread and `std::_Exit(0)`s if a probe overruns its own (slightly longer) limit, which the coordinator passes in the scan message. **This half cannot be skipped**: `killWorkerProcess()` only sends a message over the pipe, and JUCE's connection-lost notification is delivered via `triggerAsyncUpdate()` on the message thread — the very thread wedged inside the hung plugin. Without it, hung children survive as orphans (measured; see 11-RESEARCH §P2).
+  - Verified against this machine: 3 plugins hang rather than crash (two Waves/SSL AUs and the Waves VST3 shell).
+- Persist the plugin list after every few successful probes: a later crash then costs one plugin, not the whole 5-minute run.
 - Catalog persists as XML in an app-support path chosen to be readable under DAW sandboxes (Unify's GarageBand lesson — **verify location empirically in Logic/GarageBand**). Scans run from the standalone; the plugin build reads the catalog and can trigger a rescan but warns it's better done standalone.
 - AUv3: async instantiation, message thread, best-effort inside DAWs.
 

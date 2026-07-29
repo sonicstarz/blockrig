@@ -35,12 +35,13 @@ the buffer budget, matching `bench`'s independent 3.54% for the same capture.
 - `dsp/AmpSlot` was reused unchanged rather than trimmed; its `phaseInvert` field is simply left unused (polarity is a lane concern). Touching verified DSP for cosmetic reasons wasn't worth the risk.
 - An empty NAM block passes audio through rather than outputting silence — the opposite of the old dual-slot behavior, and correct here: a block with no capture loaded shouldn't mute the rig.
 
-## P2 — Standalone shell + scanning + catalog (2-3 days)
+## P2 — Scanning + catalog (scanning half complete 2026-07-29)
 
-- Custom standalone app (`JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP`): AudioDeviceManager, settings persistence (sandbox-reachable path), `AudioProcessorPlayer` wiring.
-- Out-of-process scanner (coordinator/worker via own-executable relaunch), dead-man's pedal, denylist, **60 s watchdog kill**, incremental catalog persistence. Stock `PluginListComponent` UI for now.
-- Scan this machine's 58 VST3 + 67 AU corpus; document casualties in the denylist.
-- **Done when:** full-corpus scan completes unattended with crashes/hangs contained; catalog survives restart.
+- ~~Out-of-process scanner (coordinator/worker via own-executable relaunch), dead-man's pedal, denylist, **60 s watchdog kill**, incremental catalog persistence.~~ Done: `host/PluginCatalog`, `host/PluginScannerWorker`. The watchdog needed a **second half in the child** that the plan did not anticipate — see 11-RESEARCH §P2.3.
+- ~~Scan this machine's corpus; document casualties in the denylist.~~ Done: 857 probes → 860 types in ~5.4 min; 3 plugins hang and are denylisted.
+- **Deferred to P3, deliberately:** the custom standalone app shell (`JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP`, AudioDeviceManager, `AudioProcessorPlayer`). A standalone app with no lane UI has nothing to show and nothing to drive; it belongs with the UI it exists to host. Scanning did not need it — `tests/scan_tests.cpp` is itself both coordinator and scanner child, which tests the shipping arrangement more honestly than a GUI would.
+- **Brought forward from P4:** `BlockRigProcessor` (owns chain + catalog, async block creation, latency reporting) and `state/RigState` (the full schema-1 serializer) were built here, because the scanner needed something to be part of and the schema was already designed. Verified by `tests/rig_tests.cpp`.
+- **Done when:** ~~full-corpus scan completes unattended with crashes/hangs contained; catalog survives restart.~~ Met.
 
 ## P3 — Functional lane UI (3–5 days)
 
