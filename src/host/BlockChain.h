@@ -81,8 +81,10 @@ public:
     /// Total latency of the currently rendering lane, for the host.
     int getLatencySamples() const noexcept { return mPublishedLatency.load(std::memory_order_acquire); }
 
-    /// Whole-callback cost as a fraction of the buffer's time budget.
+    /// Whole-callback cost as a fraction of the buffer's time budget. The
+    /// non-const overload exists so the UI can decay the held peak.
     const BlockLoad& getTotalLoad() const noexcept { return mTotalLoad; }
+    BlockLoad& getTotalLoad() noexcept { return mTotalLoad; }
 
     /// Number of blocks whose processing exceeded the buffer budget.
     int getDropoutCount() const noexcept { return mDropouts.load(std::memory_order_relaxed); }

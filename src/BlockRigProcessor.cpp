@@ -222,10 +222,4 @@ void BlockRigProcessor::setStateInformation(const void* data, int sizeInBytes)
     rigstate::restore(*this, rig);
 }
 
-juce::AudioProcessorEditor* BlockRigProcessor::createEditor()
-{
-    // Placeholder until the lane UI lands in P3.
-    return new juce::GenericAudioProcessorEditor(*this);
-}
-
 } // namespace blockrig

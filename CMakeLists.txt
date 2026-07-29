@@ -127,6 +127,105 @@ target_link_libraries(NAMModeler PRIVATE
     juce::juce_recommended_warning_flags)
 
 # ---------------------------------------------------------------------------
+# BlockRig: the block host. Shared sources, then one app target and one plugin
+# target, so the standalone can own its audio device while the plugin build stays
+# a plain juce_add_plugin.
+# ---------------------------------------------------------------------------
+set(BLOCKRIG_SOURCES
+    src/BlockRigProcessor.cpp
+    src/state/RigState.cpp
+    src/state/PluginState.cpp
+    src/host/BlockChain.cpp
+    src/host/BlockInstance.cpp
+    src/host/PluginCatalog.cpp
+    src/host/PluginScannerWorker.cpp
+    src/host/InternalBlockFormat.cpp
+    src/blocks/nam/NamBlockProcessor.cpp
+    src/dsp/AmpSlot.cpp
+    src/dsp/ToneStack.cpp
+    src/dsp/ResamplingNam.cpp
+    src/dsp/ModelLoader.cpp
+    src/ui/Theme.cpp
+    src/ui/CpuMeter.cpp
+    src/ui/LaneView.cpp
+    src/ui/BlockPicker.cpp
+    src/ui/NamBlockPanel.cpp
+    src/ui/PluginEditorWindows.cpp
+    src/ui/MainView.cpp
+    src/ui/HostedEditor.cpp)
+
+set(BLOCKRIG_DEFINITIONS
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_AU=1
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    # We never shipped a VST2, so there is no automation compatibility to keep.
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_REPORT_APP_USAGE=0)
+
+juce_add_gui_app(BlockRigApp
+    PRODUCT_NAME "BlockRig"
+    COMPANY_NAME "BlockRig"
+    BUNDLE_ID "com.blockrig.app"
+    ICON_BIG "")
+
+target_sources(BlockRigApp PRIVATE
+    src/app/StandaloneApp.cpp
+    ${BLOCKRIG_SOURCES})
+
+target_include_directories(BlockRigApp PRIVATE src)
+
+target_compile_definitions(BlockRigApp PRIVATE
+    ${BLOCKRIG_DEFINITIONS}
+    JUCE_STANDALONE_APPLICATION=1
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+
+target_link_libraries(BlockRigApp PRIVATE
+    $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
+    juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_audio_devices
+    juce::juce_dsp
+    juce::juce_gui_extra
+    juce::juce_recommended_config_flags)
+
+juce_add_plugin(BlockRigPlugin
+    PRODUCT_NAME "BlockRig"
+    COMPANY_NAME "BlockRig"
+    BUNDLE_ID "com.blockrig.plugin"
+    PLUGIN_MANUFACTURER_CODE Brig
+    PLUGIN_CODE Brg1
+    FORMATS VST3 AU
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    COPY_PLUGIN_AFTER_BUILD TRUE
+    VST3_CATEGORIES Fx
+    AU_MAIN_TYPE kAudioUnitType_Effect)
+
+target_sources(BlockRigPlugin PRIVATE
+    src/PluginEntry.cpp
+    ${BLOCKRIG_SOURCES})
+
+target_include_directories(BlockRigPlugin PRIVATE src)
+
+target_compile_definitions(BlockRigPlugin PUBLIC ${BLOCKRIG_DEFINITIONS})
+
+target_link_libraries(BlockRigPlugin PUBLIC
+    $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>)
+
+target_link_libraries(BlockRigPlugin PRIVATE
+    juce::juce_audio_utils
+    juce::juce_audio_processors
+    juce::juce_audio_devices
+    juce::juce_dsp
+    juce::juce_gui_extra
+    PUBLIC
+    juce::juce_recommended_config_flags)
+
+# ---------------------------------------------------------------------------
 # Headless DSP checks (no JUCE dependency)
 # ---------------------------------------------------------------------------
 option(NAMMODELER_BUILD_TESTS "Build the headless DSP tests" ON)
@@ -251,6 +350,7 @@ if(NAMMODELER_BUILD_TESTS)
 
     target_sources(rig_tests PRIVATE
         tests/rig_tests.cpp
+        tests/headless_editor_stub.cpp
         src/BlockRigProcessor.cpp
         src/state/RigState.cpp
         src/host/BlockChain.cpp
