@@ -180,6 +180,30 @@ if(NAMMODELER_BUILD_TESTS)
         juce::juce_dsp
         juce::juce_recommended_config_flags)
 
+    # Chain engine tests: real hosted plug-ins, live edits, CPU attribution.
+    juce_add_console_app(chain_tests PRODUCT_NAME "chain_tests")
+
+    target_sources(chain_tests PRIVATE
+        tests/chain_tests.cpp
+        src/host/BlockChain.cpp
+        src/host/BlockInstance.cpp)
+
+    target_include_directories(chain_tests PRIVATE src)
+
+    target_compile_definitions(chain_tests PRIVATE
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+
+    target_link_libraries(chain_tests PRIVATE
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_dsp
+        juce::juce_recommended_config_flags)
+
     # P0 de-risk spike: proves plugin hosting works and measures its cost.
     # Throwaway once the real host engine lands (docs/16-BUILD-PLAN.md P0).
     juce_add_console_app(host_spike PRODUCT_NAME "host_spike")
@@ -220,4 +244,5 @@ if(NAMMODELER_BUILD_TESTS)
              COMMAND dsp_tests "${NAM_CORE_DIR}/example_models")
     add_test(NAME plugin_tests
              COMMAND plugin_tests "${NAM_CORE_DIR}/example_models")
+    add_test(NAME chain_tests COMMAND chain_tests)
 endif()
