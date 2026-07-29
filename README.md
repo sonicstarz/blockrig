@@ -1,6 +1,18 @@
 # NAM Modeler — Dual-Capture Stereo NAM Plugin
 
-**Status: planning/design phase. No code yet — these documents are the groundwork for implementation.**
+**Status: the plugin builds and runs.** The audio engine (milestones M0–M4) is complete and
+verified; the editor is functional but not yet visually designed; the capture wizard (M5/M6) is
+designed but not built. See [docs/05-BUILD-PLAN.md](docs/05-BUILD-PLAN.md) for exact status.
+
+```bash
+git submodule update --init --recursive
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 8
+ctest --test-dir build --output-on-failure
+```
+
+Builds VST3, AU and Standalone. On macOS the plugins are copied into your user plug-in folders
+automatically, and `auval -v aufx Nmd1 Nmdl` passes.
 
 A low-latency stereo audio plugin (VST3 / AU / Standalone) that runs **two Neural Amp Modeler
 captures simultaneously** — including the new **NAM A2** architecture — each pannable left/right,
