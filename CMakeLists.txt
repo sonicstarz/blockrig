@@ -180,6 +180,41 @@ if(NAMMODELER_BUILD_TESTS)
         juce::juce_dsp
         juce::juce_recommended_config_flags)
 
+    # P0 de-risk spike: proves plugin hosting works and measures its cost.
+    # Throwaway once the real host engine lands (docs/16-BUILD-PLAN.md P0).
+    juce_add_console_app(host_spike PRODUCT_NAME "host_spike")
+
+    # Links our own plugin sources too, so the same DSP can be measured both
+    # in-process and hosted-as-VST3 in a single run.
+    target_sources(host_spike PRIVATE
+        tests/host_spike.cpp
+        src/PluginProcessor.cpp
+        src/PluginEditor.cpp
+        src/dsp/AmpSlot.cpp
+        src/dsp/ToneStack.cpp
+        src/dsp/ResamplingNam.cpp
+        src/dsp/ModelLoader.cpp
+        src/state/Parameters.cpp
+        src/state/PluginState.cpp)
+
+    target_include_directories(host_spike PRIVATE src)
+
+    target_compile_definitions(host_spike PRIVATE
+        NAMMODELER_HEADLESS_TEST=1
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+
+    target_link_libraries(host_spike PRIVATE
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_dsp
+        juce::juce_recommended_config_flags)
+
     enable_testing()
     add_test(NAME dsp_tests
              COMMAND dsp_tests "${NAM_CORE_DIR}/example_models")

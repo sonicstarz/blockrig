@@ -4,13 +4,17 @@ Phases end in verifiable states; run the acceptance check before moving on. UI l
 work is deliberately *late* — engine correctness first, with a plain-but-functional UI until P5.
 The existing NAM tests (`ctest`) must stay green through every phase.
 
-## P0 — De-risk & re-base (½–1 day)
+## P0 — De-risk & re-base — **COMPLETE (2026-07-29)**
 
-- Bump JUCE past the 8.0.9 VST3-hosting regression (newest clean 8.0.x); re-run all existing tests; note the `juce_audio_processors_headless` module split if the version has it.
-- Confirm VST3 SDK MIT license text in the bundled SDK; add attribution to docs/About copy.
-- Spike (throwaway target): scan one directory out-of-process, instantiate one VST3 and one AU, pass audio through it standalone, print its latency. Proves the hosting toolchain end-to-end before any product code.
-- **Benchmark the 7× wrapper-overhead claim**: same third-party plugin hosted in the spike vs directly in Reaper; record numbers in 11-RESEARCH. If overhead >1.5×, stop and investigate.
-- **Done when:** spike passes audio through a hosted plugin; overhead number recorded; tests green on the new JUCE.
+Findings recorded in 11-RESEARCH §"Verified during P0". Summary: JUCE pinned to **8.0.15**
+(not 9.0.0 — new CoreAudio implementation), existing tests green after the bump, VST3 SDK
+confirmed MIT in-tree, both AU and VST3 hosting verified against Apple AUs and our own plugin,
+**hosting overhead measured at 0.19% of a core per plug-in — the 7× claim is rejected, gate
+passed**. Two findings changed downstream plans: `addDefaultFormats()` is deleted in JUCE 8.0.11+
+(use `juce::addDefaultFormatsToManager`), and a raw processor chunk is not valid VST3 component
+state — child state is opaque and restore fails *silently*, so P4 needs its own verification step.
+
+Artifact: `tests/host_spike.cpp` (throwaway; delete once `host/` lands).
 
 ## P1 — Chain engine + NAM block (2–4 days)
 

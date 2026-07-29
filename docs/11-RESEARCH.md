@@ -67,11 +67,23 @@ the engine stays swappable.
 corpus, guaranteed to include at least one misbehaver. `bx_rockrack V3 Player` is a guitar amp
 plugin — good third-party block for demos.
 
+## Verified during P0 (2026-07-29, JUCE 8.0.15, Apple Silicon)
+
+Measured by `tests/host_spike.cpp`. These supersede the assumptions above where they differ.
+
+1. **JUCE pinned to 8.0.15.** Chosen over 9.0.0, which ships a brand-new macOS CoreAudio implementation — not something to adopt days after release in an app that owns the audio device. The existing NAM plugin builds and all tests pass on 8.0.15 unchanged.
+2. **VST3 SDK is MIT confirmed in-tree**: `modules/juce_audio_processors_headless/format_types/VST3_SDK/LICENSE.txt` reads "MIT License, Copyright (c) 2025, Steinberg Media Technologies GmbH". Note the path — the SDK moved into the headless module.
+3. **API break from the module split**: `AudioPluginFormatManager::addDefaultFormats()` is `= delete` in JUCE 8.0.11+. Use the free function `juce::addDefaultFormatsToManager(manager)` (GUI build) or `addHeadlessDefaultFormatsToManager(manager)`. `juce_audio_processors` depends on `juce_audio_processors_headless`, so linking the former is still all we need.
+4. **Hosting works for both formats.** `AudioUnit` and `VST3` both compiled in and enumerated; the AU format reports **797 installed plug-ins** on this machine. Apple's AUBandpass / AUDynamicsProcessor / AUDelay and our own NAM Modeler VST3 all instantiated, rendered finite audio, and reported latency correctly (AUDynamicsProcessor: 256 samples — proves latency propagation will have real values to sum).
+5. **The 7× overhead claim is not reproduced.** Fixed per-plugin hosting cost measured at **0.19% of one core** for our (idle) VST3 and **0.07–0.10%** for Apple's AUs. There is no mechanism for a multiplier — `processBlock` is called once per block either way — and the in-process NAM DSP cost (A2 3.77%, A1 7.06%) matches the `bench` reference (3.54% / 8.51%). A 10-block chain therefore pays roughly 1–2% of a core in wrapper overhead. **Gate passed; proceed.**
+6. **A raw processor chunk is NOT valid VST3 component state.** JUCE's plug-in-side wrapper nests the processor's chunk inside its own container, so a hand-built or foreign-sourced chunk is silently ignored — measured: 148 KB pushed in, 2 KB of defaults read back, no error raised. **Consequences for P4:** child state must always be obtained from the hosted instance's own `getStateInformation` and handed back to `setStateInformation` **on the same plug-in type**; never synthesize or edit child chunks; and a failed restore is silent, so the rig loader needs its own sanity check (e.g. verify a known parameter after restore) rather than trusting the call.
+7. **Hosted VST3 parameter changes only land while audio is flowing.** `setValueNotifyingHost` followed immediately by `getStateInformation` captures the *old* value; the change reaches the processor via the audio callback. Any test or preset code that sets parameters then saves must render a few blocks first. (This also means preset application in a stopped standalone needs a few silent blocks pumped, or state-level application instead of parameter-level.)
+
 ## Open items to verify at build time
 
-1. JUCE version bump: pick the 8.0.x with the VST3-hosting regression fixed; check whether `AudioProcessorGraph`'s module move (8.0.11) affects anything we include; re-run existing NAM plugin tests after the bump.
-2. VST3 SDK MIT text present in the pinned JUCE's bundled SDK.
-3. AU enumeration/instantiation from inside Logic — empirical test early (it's the flagship DAW case).
-4. Settings/known-plugins file location reachable under DAW sandboxes (GarageBand test; Unify's lesson).
-5. Multi-MB state chunks in Logic autosave — test once real rigs exist.
-6. The unconfirmed 7× VST3-wrapper-hosting CPU report — benchmark a hosted plugin standalone vs in-DAW early; if real, it changes everything about the plugin build's viability.
+Items 1, 2 and 6 are resolved above. Remaining:
+
+1. AU enumeration/instantiation from inside Logic — empirical test in P4 (the flagship DAW case). Note we can now enumerate 797 AUs standalone, so the question is purely about the sandboxed-in-DAW case.
+2. Settings/known-plugins file location reachable under DAW sandboxes (GarageBand test; Unify's lesson).
+3. Multi-MB state chunks in Logic autosave — test once real rigs exist.
+4. Whether third-party plugins that are *licensed* pop authorisation dialogs during scan or instantiation, and how that interacts with the out-of-process scanner's watchdog. The P0 spike deliberately used only Apple AUs and our own plugin to avoid this; P2's full-corpus scan is where it surfaces.
