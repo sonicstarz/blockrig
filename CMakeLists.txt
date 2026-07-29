@@ -150,7 +150,39 @@ if(NAMMODELER_BUILD_TESTS)
     target_link_libraries(bench PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>)
     target_compile_features(bench PRIVATE cxx_std_20)
 
+    # Integration tests drive the real AudioProcessor, so they need JUCE and the
+    # plugin sources (minus the format wrapper's createPluginFilter entry point).
+    juce_add_console_app(plugin_tests PRODUCT_NAME "plugin_tests")
+
+    target_sources(plugin_tests PRIVATE
+        tests/plugin_tests.cpp
+        src/PluginProcessor.cpp
+        src/PluginEditor.cpp
+        src/dsp/AmpSlot.cpp
+        src/dsp/ToneStack.cpp
+        src/dsp/ResamplingNam.cpp
+        src/dsp/ModelLoader.cpp
+        src/state/Parameters.cpp
+        src/state/PluginState.cpp)
+
+    target_include_directories(plugin_tests PRIVATE src)
+
+    target_compile_definitions(plugin_tests PRIVATE
+        NAMMODELER_HEADLESS_TEST=1
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+
+    target_link_libraries(plugin_tests PRIVATE
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
+        juce::juce_audio_utils
+        juce::juce_dsp
+        juce::juce_recommended_config_flags)
+
     enable_testing()
     add_test(NAME dsp_tests
              COMMAND dsp_tests "${NAM_CORE_DIR}/example_models")
+    add_test(NAME plugin_tests
+             COMMAND plugin_tests "${NAM_CORE_DIR}/example_models")
 endif()

@@ -4,6 +4,25 @@ Phased milestones for implementation. Each milestone ends in a **verifiable stat
 run the check, then move on. DSP correctness milestones (M1–M4) never block on UI; use
 `GenericAudioProcessorEditor` until M6.
 
+## Status as of 2026-07-29
+
+**M0–M4 are complete and verified.** M7 has a working functional editor (real visual design still
+to do). M5/M6 (the capture wizard and trainer helper) have not been started.
+
+Build: `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 8`
+Test: `ctest --test-dir build --output-on-failure` (or run `build/dsp_tests`,
+`build/plugin_tests_artefacts/Release/plugin_tests`, `build/bench` directly, each taking the
+example-models directory as its argument).
+
+Verified so far:
+- VST3, AU and Standalone all build; **`auval -v aufx Nmd1 Nmdl` passes** (renders 11–192 kHz, blocks 64–4096).
+- `tests/dsp_tests.cpp`: every example model (A1 WaveNet, LSTM, A2, slimmable container) loads and renders; **block size 64 vs 512 is bit-identical**; latency is 0 at 48 kHz and 27 samples at 44.1 kHz; tone stack curves match the spec (+17.5 dB at 80 Hz with bass at 10, +9.8 dB at 5 kHz with treble at 10).
+- `tests/plugin_tests.cpp`: silence with no model (not dry pass-through); hard-panned amps land in the correct channels; solo/mute/enable behave; **Normalized output mode measured +2.02 dB against an expected +2.02 dB**; state round-trips from the embedded model with a 0.00 dB level difference; rapid model swapping under continuous audio stays finite and stable.
+- `tests/bench.cpp`: A1 Standard 8.5% of a core per slot, A2 3.4%, LSTM 0.5%.
+
+Not yet done, in rough priority order: crossfade on model swap; per-slot metering in the UI; the
+real visual design; the capture wizard (M5) and trainer helper (M6); Windows build.
+
 ## M0 — Skeleton & de-risking (½–1 day)
 
 - CMake superbuild: JUCE (submodule or FetchContent) + NeuralAmpModelerCore ≥ v0.5.4 (submodule, `NAM_ENABLE_A2_FAST=ON`) + AudioDSPTools (submodule). `juce_add_plugin` target: VST3 + AU + Standalone, C++20, universal binary on macOS.

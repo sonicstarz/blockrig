@@ -362,7 +362,9 @@ juce::AudioProcessorEditor* NAMModelerProcessor::createEditor()
 
 } // namespace nammodeler
 
+#ifndef NAMMODELER_HEADLESS_TEST
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new nammodeler::NAMModelerProcessor();
 }
+#endif
