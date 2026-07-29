@@ -68,6 +68,15 @@ void BlockInstance::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& 
 
     if (bufferDurationSeconds > 0.0)
         mLoad.addMeasurement(static_cast<float>(elapsedSeconds / bufferDurationSeconds));
+
+    // Peak level leaving this block, with a slow fall so the tile's meter is
+    // readable at 15 Hz rather than flickering.
+    float peak = 0.0f;
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        peak = juce::jmax(peak, buffer.getMagnitude(channel, 0, buffer.getNumSamples()));
+
+    const auto previous = mOutputLevel.load(std::memory_order_relaxed);
+    mOutputLevel.store(peak > previous ? peak : previous * 0.82f, std::memory_order_relaxed);
 }
 
 } // namespace blockrig

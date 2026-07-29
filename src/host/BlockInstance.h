@@ -84,6 +84,11 @@ public:
     BlockLoad& getLoad() noexcept { return mLoad; }
     const BlockLoad& getLoad() const noexcept { return mLoad; }
 
+    /// Peak output level of this block, 0..1+. This is what the tile's meter
+    /// shows — CPU cost belongs in the CPU panel, not in something a player
+    /// will read as a signal meter.
+    float getOutputLevel() const noexcept { return mOutputLevel.load(std::memory_order_relaxed); }
+
 private:
     std::unique_ptr<juce::AudioPluginInstance> mPlugin;
     juce::String mUid;
@@ -96,6 +101,7 @@ private:
     bool mLastAppliedBypass = false;
 
     BlockLoad mLoad;
+    std::atomic<float> mOutputLevel{0.0f};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BlockInstance)
 };

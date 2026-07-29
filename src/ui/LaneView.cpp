@@ -1,5 +1,6 @@
 #include "ui/LaneView.h"
 
+#include "blocks/nam/NamBlockProcessor.h"
 #include "ui/BlockPicker.h"
 #include "ui/PluginEditorWindows.h"
 #include "ui/Theme.h"
@@ -103,14 +104,9 @@ void BlockTile::paint(juce::Graphics& g)
     g.setFont(juce::FontOptions(10.0f));
     g.drawText(mSubtitle, content.removeFromTop(13.0f), juce::Justification::topLeft, true);
 
-    // Activity strip at the bottom.
-    theme::drawLevelMeter(g, content.removeFromBottom(4.0f), mBypassed ? 0.0f : mActivity);
-
-    if (mDragging)
-    {
-        g.setColour(theme::colours::accent.withAlpha(0.12f));
-        g.fillRoundedRectangle(bounds, theme::metrics::cornerRadius);
-    }
+    // Output level of this block. Deliberately audio, not CPU: a bar on a block
+    // reads as signal, and showing load here was actively misleading.
+    theme::drawLevelMeter(g, content.removeFromBottom(5.0f), mBypassed ? 0.0f : mActivity);
 }
 
 void BlockTile::mouseDown(const juce::MouseEvent& event)
@@ -139,30 +135,40 @@ void BlockTile::mouseDrag(const juce::MouseEvent& event)
     if (!mDragging && event.getDistanceFromDragStart() < kDragThreshold)
         return;
 
-    mDragging = true;
-    repaint();
+    if (!mDragging)
+    {
+        mDragging = true;
+        mHomeBounds = getBounds();
+        // Lift it above its neighbours so it is clearly the thing being moved.
+        toFront(false);
+        setAlpha(0.85f);
+    }
+
+    // Follow the mouse horizontally: without the tile actually moving, dragging
+    // feels broken even when the reorder works.
+    auto moved = mHomeBounds;
+    moved.setX(mHomeBounds.getX() + event.getDistanceFromDragStartX());
+    setBounds(moved);
 
     if (onDragToIndex)
-    {
-        // Report in lane coordinates, since the parent owns the ordering.
-        const auto inParent = event.getEventRelativeTo(getParentComponent());
-        onDragToIndex(inParent.x, false);
-    }
+        onDragToIndex(getBounds().getCentreX(), false);
 }
 
 void BlockTile::mouseUp(const juce::MouseEvent& event)
 {
+    juce::ignoreUnused(event);
+
     if (!mDragging)
         return;
 
     mDragging = false;
-    repaint();
+    setAlpha(1.0f);
+
+    const int centre = getBounds().getCentreX();
+    setBounds(mHomeBounds); // the parent will lay us out properly on refresh
 
     if (onDragToIndex)
-    {
-        const auto inParent = event.getEventRelativeTo(getParentComponent());
-        onDragToIndex(inParent.x, true);
-    }
+        onDragToIndex(centre, true);
 }
 
 void BlockTile::mouseDoubleClick(const juce::MouseEvent&)
@@ -279,16 +285,26 @@ void LaneView::refresh()
     {
         auto* plugin = block->getPlugin();
 
+        // Subtitle carries what the user actually needs at a glance: for the NAM
+        // block the loaded capture, for anything else who made it.
         juce::String subtitle;
         if (plugin != nullptr)
         {
-            juce::PluginDescription description;
-            plugin->fillInPluginDescription(description);
-            subtitle = description.manufacturerName;
+            if (auto* nam = dynamic_cast<NamBlockProcessor*>(plugin))
+            {
+                const auto info = nam->getModelInfo();
+                subtitle = info.json.isNotEmpty() ? info.name : juce::String("no capture loaded");
+            }
+            else
+            {
+                juce::PluginDescription description;
+                plugin->fillInPluginDescription(description);
+                subtitle = description.manufacturerName;
+            }
 
             const auto latency = block->getLatencySamples();
             if (latency > 0)
-                subtitle += "  " + juce::String(latency) + " smp";
+                subtitle += "  •  " + juce::String(latency) + " smp";
         }
 
         auto tile = std::make_unique<BlockTile>(block->getUid(), shortenName(block->getDisplayName()), subtitle);
@@ -324,15 +340,13 @@ void LaneView::refresh()
 
             if (!dropped)
             {
-                if (mDropIndicatorIndex != target)
-                {
-                    mDropIndicatorIndex = target;
-                    mLaneContent.repaint();
-                }
+                mDropIndicatorIndex = target;
+                mLaneContent.setDropIndicatorX(xForIndex(target));
                 return;
             }
 
             mDropIndicatorIndex = -1;
+            mLaneContent.setDropIndicatorX(-1);
             mProcessor.moveBlock(uid, target);
             refresh();
         };
@@ -343,6 +357,13 @@ void LaneView::refresh()
 
     resized();
     mLaneContent.repaint();
+}
+
+int LaneView::xForIndex(int index) const
+{
+    const int slotWidth = theme::metrics::blockWidth + theme::metrics::arrowWidth;
+    const int laneStart = theme::metrics::endBlockWidth + theme::metrics::arrowWidth;
+    return laneStart + index * slotWidth - theme::metrics::arrowWidth / 2;
 }
 
 int LaneView::indexForX(int x) const
@@ -463,7 +484,7 @@ void LaneView::timerCallback()
         if (auto* block = mProcessor.getChain().getBlockByUid(tile->getUid()))
         {
             tile->setLoad(block->getLoad().getAverage());
-            tile->setActivity(juce::jlimit(0.0f, 1.0f, block->getLoad().getAverage() * 8.0f));
+            tile->setActivity(juce::jlimit(0.0f, 1.0f, block->getOutputLevel()));
             tile->setBypassed(block->isBypassed());
             tile->setEditorOpen(mEditorWindows.isOpen(tile->getUid()));
         }
@@ -477,6 +498,37 @@ void LaneView::paint(juce::Graphics& g)
 {
     g.setColour(theme::colours::background);
     g.fillRect(getLocalBounds());
+}
+
+void LaneContent::paint(juce::Graphics& g)
+{
+    // Connectors between the blocks, so the lane reads as a signal path rather
+    // than a row of unrelated boxes.
+    g.setColour(theme::colours::outlineStrong);
+
+    for (const auto& segment : mConnectors)
+    {
+        const auto y = static_cast<float>(segment.getCentreY());
+        g.fillRect(juce::Rectangle<float>(static_cast<float>(segment.getX()), y - 0.75f,
+                                          static_cast<float>(segment.getWidth()), 1.5f));
+
+        // Arrow head.
+        juce::Path head;
+        const auto tip = static_cast<float>(segment.getRight());
+        head.startNewSubPath(tip - 5.0f, y - 3.5f);
+        head.lineTo(tip, y);
+        head.lineTo(tip - 5.0f, y + 3.5f);
+        g.strokePath(head, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved,
+                                                juce::PathStrokeType::rounded));
+    }
+
+    // Where a dragged tile would land.
+    if (mDropIndicatorX >= 0)
+    {
+        g.setColour(theme::colours::accent);
+        g.fillRoundedRectangle(static_cast<float>(mDropIndicatorX) - 1.5f, 8.0f, 3.0f,
+                               static_cast<float>(getHeight()) - 16.0f, 1.5f);
+    }
 }
 
 void LaneView::resized()
@@ -503,6 +555,26 @@ void LaneView::resized()
     x += theme::metrics::endBlockWidth;
 
     mLaneContent.setSize(juce::jmax(x + theme::metrics::gap, getWidth()), getHeight());
+
+    // Connector runs: one between every pair of adjacent boxes in the lane.
+    std::vector<juce::Rectangle<int>> connectors;
+    juce::Component* previous = &mInputBlock;
+
+    const auto connectTo = [&connectors, &previous, y, height](juce::Component& next) {
+        const int from = previous->getRight();
+        const int to = next.getX();
+        if (to > from)
+            connectors.push_back({from, y, to - from, height});
+        previous = &next;
+    };
+
+    for (auto& tile : mTiles)
+        connectTo(*tile);
+
+    connectTo(mAddButton);
+    connectTo(mOutputBlock);
+
+    mLaneContent.setConnectors(std::move(connectors));
 }
 
 } // namespace blockrig

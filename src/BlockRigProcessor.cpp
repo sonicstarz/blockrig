@@ -44,6 +44,11 @@ BlockRigProcessor::BlockRigProcessor()
 {
     mCatalog.loadFromStorage();
     mLatencyPoller = std::make_unique<LatencyPoller>(*this);
+
+    // Start muted only in the standalone app, where we open a live input into a
+    // live output the moment the window appears. In a DAW the host controls
+    // routing and a silent plug-in just looks broken.
+    mMuted.store(wrapperType == wrapperType_Standalone, std::memory_order_relaxed);
 }
 
 BlockRigProcessor::~BlockRigProcessor()
@@ -61,6 +66,10 @@ void BlockRigProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     mOutputGain.reset(sampleRate, static_cast<double>(kSmoothingSeconds));
     mInputGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(mInputGainDb));
     mOutputGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(mOutputGainDb));
+
+    // Ramp rather than jump, so un-muting does not click.
+    mMuteGain.reset(sampleRate, 0.03);
+    mMuteGain.setCurrentAndTargetValue(isMuted() ? 0.0f : 1.0f);
 
     updateLatency();
 }
@@ -91,6 +100,12 @@ void BlockRigProcessor::setOutputGainDb(float gainDb)
 {
     mOutputGainDb = gainDb;
     mOutputGain.setTargetValue(juce::Decibels::decibelsToGain(gainDb));
+}
+
+void BlockRigProcessor::setMuted(bool shouldBeMuted)
+{
+    mMuted.store(shouldBeMuted, std::memory_order_relaxed);
+    mMuteGain.setTargetValue(shouldBeMuted ? 0.0f : 1.0f);
 }
 
 void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -146,6 +161,16 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
             data[i] *= gain.getNextValue();
     }
     mOutputGain.skip(numSamples);
+
+    // Mute last, so it silences the rig no matter what any block is doing.
+    for (int channel = 0; channel < juce::jmin(numOutputs, buffer.getNumChannels()); ++channel)
+    {
+        auto* data = buffer.getWritePointer(channel);
+        auto gain = mMuteGain;
+        for (int i = 0; i < numSamples; ++i)
+            data[i] *= gain.getNextValue();
+    }
+    mMuteGain.skip(numSamples);
 
     mOutputLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
 }

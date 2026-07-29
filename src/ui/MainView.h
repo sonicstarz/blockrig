@@ -21,6 +21,7 @@ namespace blockrig
 /// owns the device.
 class MainView final : public juce::Component
                      , private juce::KeyListener
+                     , private juce::Timer
 {
 public:
     MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* deviceManager);
@@ -31,9 +32,11 @@ public:
 
 private:
     bool keyPressed(const juce::KeyPress&, juce::Component*) override;
+    void timerCallback() override;
 
     void showSettings();
     void startScan();
+    void refreshHeader();
     void updatePanel();
     void showIoPanel(EndBlock::Kind kind);
 
@@ -46,6 +49,13 @@ private:
     juce::Label mTitle;
     CpuMeter mCpuMeter;
     juce::TextButton mSettingsButton{"Settings"};
+
+    /// Big and always reachable: an app that opens a live input into a live
+    /// output needs an obvious kill switch, not a menu item.
+    juce::TextButton mMuteButton;
+
+    /// Doubles as the call to action when no plug-ins have been scanned yet.
+    juce::TextButton mPluginCountButton;
 
     LaneView mLane;
 

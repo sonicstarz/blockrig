@@ -51,6 +51,7 @@ private:
     float mActivity = 0.0f;
     float mLoad = 0.0f;
     bool mDragging = false;
+    juce::Rectangle<int> mHomeBounds;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BlockTile)
 };
@@ -87,6 +88,32 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EndBlock)
 };
 
+/// Scrollable strip that holds the tiles and draws what sits *between* them:
+/// the connectors, and the indicator showing where a dragged block would land.
+class LaneContent final : public juce::Component
+{
+public:
+    void paint(juce::Graphics&) override;
+
+    void setConnectors(std::vector<juce::Rectangle<int>> connectors)
+    {
+        mConnectors = std::move(connectors);
+        repaint();
+    }
+
+    void setDropIndicatorX(int x)
+    {
+        if (mDropIndicatorX == x)
+            return;
+        mDropIndicatorX = x;
+        repaint();
+    }
+
+private:
+    std::vector<juce::Rectangle<int>> mConnectors;
+    int mDropIndicatorX = -1;
+};
+
 /// The pedalboard strip: Input at the far left, Output at the far right, blocks
 /// in between, and a "+" to add another.
 class LaneView final : public juce::Component
@@ -102,6 +129,9 @@ public:
     /// Rebuilds tiles from the chain. Called whenever the lane changes.
     void refresh();
 
+    void setInputCaption(const juce::String& caption) { mInputBlock.setCaption(caption); }
+    void setOutputCaption(const juce::String& caption) { mOutputBlock.setCaption(caption); }
+
     juce::String getSelectedUid() const { return mSelectedUid; }
 
     /// Fires when selection changes, so the panel below can follow.
@@ -115,6 +145,7 @@ private:
     void showBlockMenu(const juce::String& uid);
     void selectBlock(const juce::String& uid);
     int indexForX(int x) const;
+    int xForIndex(int index) const;
 
     BlockRigProcessor& mProcessor;
     PluginEditorWindows& mEditorWindows;
@@ -130,7 +161,7 @@ private:
     int mDropIndicatorIndex = -1;
 
     juce::Viewport mViewport;
-    juce::Component mLaneContent;
+    LaneContent mLaneContent;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LaneView)
 };

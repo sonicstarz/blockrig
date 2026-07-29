@@ -81,6 +81,13 @@ public:
     float getInputGainDb() const { return mInputGainDb; }
     float getOutputGainDb() const { return mOutputGainDb; }
 
+    /// Master mute. Engaged at startup in the standalone app: it opens a live
+    /// input straight into a live output, and on an interface that monitors its
+    /// own output that is a feedback loop before the user has touched anything.
+    /// Also the kill switch when a rig does start howling.
+    void setMuted(bool shouldBeMuted);
+    bool isMuted() const { return mMuted.load(std::memory_order_relaxed); }
+
     float getInputLevel() const { return mInputLevel.load(std::memory_order_relaxed); }
     float getOutputLevel() const { return mOutputLevel.load(std::memory_order_relaxed); }
 
@@ -96,6 +103,8 @@ private:
 
     juce::SmoothedValue<float> mInputGain;
     juce::SmoothedValue<float> mOutputGain;
+    juce::SmoothedValue<float> mMuteGain;
+    std::atomic<bool> mMuted{true};
 
     std::atomic<float> mInputLevel{0.0f};
     std::atomic<float> mOutputLevel{0.0f};

@@ -245,16 +245,51 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
 
     addAndMakeVisible(mCpuMeter);
 
+    // Muted at startup: opening a live input into a live output can howl before
+    // the user has done anything, and they need one obvious way to stop it.
+    mMuteButton.onClick = [this] {
+        mProcessor.setMuted(!mProcessor.isMuted());
+        refreshHeader();
+    };
+    mMuteButton.setTooltip("Mute the rig's output. Starts muted so nothing can feed back unexpectedly.");
+    addAndMakeVisible(mMuteButton);
+
+    // Shows how many blocks are available, and becomes the prompt to scan when
+    // nothing has been scanned yet.
+    mPluginCountButton.onClick = [this] { startScan(); };
+    addAndMakeVisible(mPluginCountButton);
+
     mSettingsButton.onClick = [this] { showSettings(); };
     addAndMakeVisible(mSettingsButton);
 
     addAndMakeVisible(mLane);
 
-    mPanelPlaceholder.setText("Select a block to edit it, or press + to add one",
-                              juce::dontSendNotification);
     mPanelPlaceholder.setJustificationType(juce::Justification::centred);
+    mPanelPlaceholder.setMinimumHorizontalScale(1.0f);
     mPanelPlaceholder.setColour(juce::Label::textColourId, theme::colours::textFaint);
+    mPanelPlaceholder.setFont(juce::FontOptions(13.0f));
     addAndMakeVisible(mPanelPlaceholder);
+
+    // The end blocks should say what they are wired to, not just "INPUT".
+    if (mDeviceManager != nullptr)
+    {
+        if (auto* device = mDeviceManager->getCurrentAudioDevice())
+        {
+            const auto mode = mProcessor.getInputMode() == BlockRigProcessor::InputMode::mono ? "mono" : "stereo";
+            mLane.setInputCaption(device->getName() + "\n" + mode);
+            mLane.setOutputCaption(device->getName());
+        }
+        else
+        {
+            mLane.setInputCaption("No device\nclick to set up");
+            mLane.setOutputCaption("No device");
+        }
+    }
+    else
+    {
+        mLane.setInputCaption("From DAW");
+        mLane.setOutputCaption("To DAW");
+    }
 
     mLane.onSelectionChanged = [this] { updatePanel(); };
     mLane.onEndBlockSelected = [this](EndBlock::Kind kind) { showIoPanel(kind); };
@@ -266,11 +301,14 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
 
     addKeyListener(this);
     setWantsKeyboardFocus(true);
+    refreshHeader();
+    startTimerHz(4);
     setSize(1180, 660);
 }
 
 MainView::~MainView()
 {
+    stopTimer();
     removeKeyListener(this);
     mProcessor.onChainChanged = nullptr;
     setLookAndFeel(nullptr);
@@ -317,6 +355,25 @@ void MainView::updatePanel()
 
     if (block == nullptr)
     {
+        const bool emptyLane = mProcessor.getChain().getNumBlocks() == 0;
+        const bool noPlugins = mProcessor.getCatalog().getKnownPluginList().getNumTypes() == 0;
+
+        juce::String guidance;
+        if (emptyLane)
+            guidance = "Your chain is empty.\n\nClick  +  in the lane above to add a block.\n"
+                       "Start with NAM under Built-in, then drop a .nam capture on it.";
+        else
+            guidance = "Click a block in the lane to edit it.\n\n"
+                       "Drag blocks to reorder  •  click a block's dot to bypass  •  "
+                       "double-click a plug-in to open its window.";
+
+        if (noPlugins)
+            guidance += "\n\nNo plug-ins scanned yet — use  Scan plug-ins  in the header to find your VSTs.";
+
+        if (mProcessor.isMuted())
+            guidance += "\n\nOutput is MUTED. Click the red button in the header when you are ready to hear it.";
+
+        mPanelPlaceholder.setText(guidance, juce::dontSendNotification);
         mPanelPlaceholder.setVisible(true);
         resized();
         return;
@@ -348,6 +405,35 @@ void MainView::showIoPanel(EndBlock::Kind kind)
     mPanel = std::make_unique<IoPanel>(mProcessor, kind, mDeviceManager);
     addAndMakeVisible(*mPanel);
     resized();
+}
+
+void MainView::timerCallback()
+{
+    refreshHeader();
+}
+
+void MainView::refreshHeader()
+{
+    const bool muted = mProcessor.isMuted();
+    mMuteButton.setButtonText(muted ? "MUTED" : "LIVE");
+    mMuteButton.setColour(juce::TextButton::buttonColourId,
+                          muted ? theme::colours::bad.withAlpha(0.85f) : theme::colours::good.withAlpha(0.7f));
+
+    const int count = mProcessor.getCatalog().getKnownPluginList().getNumTypes();
+
+    if (count == 0)
+    {
+        mPluginCountButton.setButtonText("Scan plug-ins");
+        mPluginCountButton.setColour(juce::TextButton::buttonColourId, theme::colours::accent.withAlpha(0.85f));
+        mPluginCountButton.setTooltip("No plug-ins found yet. Scanning takes a few minutes and only needs "
+                                     "doing once.");
+    }
+    else
+    {
+        mPluginCountButton.setButtonText(juce::String(count) + " plug-ins");
+        mPluginCountButton.setColour(juce::TextButton::buttonColourId, theme::colours::panelRaised);
+        mPluginCountButton.setTooltip("Click to rescan.");
+    }
 }
 
 void MainView::startScan()
@@ -426,10 +512,16 @@ void MainView::resized()
     auto area = getLocalBounds();
 
     auto header = area.removeFromTop(theme::metrics::headerHeight).reduced(theme::metrics::padding, 0);
-    mTitle.setBounds(header.removeFromLeft(120).withSizeKeepingCentre(120, 24));
-    mSettingsButton.setBounds(header.removeFromRight(96).withSizeKeepingCentre(96, 26));
+    mTitle.setBounds(header.removeFromLeft(112).withSizeKeepingCentre(112, 24));
+
+    mMuteButton.setBounds(header.removeFromLeft(78).withSizeKeepingCentre(78, 28));
+    header.removeFromLeft(theme::metrics::gap);
+
+    mSettingsButton.setBounds(header.removeFromRight(88).withSizeKeepingCentre(88, 26));
     header.removeFromRight(theme::metrics::gap);
-    mCpuMeter.setBounds(header.removeFromRight(140).withSizeKeepingCentre(140, 30));
+    mCpuMeter.setBounds(header.removeFromRight(130).withSizeKeepingCentre(130, 30));
+    header.removeFromRight(theme::metrics::gap);
+    mPluginCountButton.setBounds(header.removeFromRight(116).withSizeKeepingCentre(116, 26));
 
     area.removeFromTop(theme::metrics::gap);
     mLane.setBounds(area.removeFromTop(theme::metrics::laneHeight).reduced(theme::metrics::padding, 0));
