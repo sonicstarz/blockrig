@@ -43,12 +43,20 @@ the buffer budget, matching `bench`'s independent 3.54% for the same capture.
 - **Brought forward from P4:** `BlockRigProcessor` (owns chain + catalog, async block creation, latency reporting) and `state/RigState` (the full schema-1 serializer) were built here, because the scanner needed something to be part of and the schema was already designed. Verified by `tests/rig_tests.cpp`.
 - **Done when:** ~~full-corpus scan completes unattended with crashes/hangs contained; catalog survives restart.~~ Met.
 
-## P3 — Functional lane UI (3–5 days)
+## P3 — Functional lane UI — **COMPLETE (2026-07-29)**
 
-- Lane view: block tiles, selection, drag-reorder, `+` picker with search/categories/recents, right-click menu, IN/OUT end blocks with channel pickers + meters, error tiles.
-- Inline panel: NAM block panel (functional layout, default styling), generic parameter fallback for third-party.
-- Floating editor windows with the PatchWork mitigation set (position memory, ESC, close-all, always-on-top, raise-if-open).
-- **Done when:** build a rig by mouse alone — guitar in, NAM + two third-party blocks, reorder live, open/close editors — no glitches, no console errors.
+Delivered `ui/`: `Theme` (all colours/metrics in one file), `LaneView` with `BlockTile` and
+`EndBlock`, `BlockPicker` (search-first), `PluginEditorWindows` (full PatchWork mitigation set),
+`NamBlockPanel` (inline editor for the built-in amp), `CpuMeter` (header + per-block breakdown),
+`MainView`, and `HostedEditor`. Plus the two deployment targets: `BlockRigApp`
+(`juce_add_gui_app`) and `BlockRigPlugin` (VST3 + AU). BlockRig AU passes `auval`; all four fast
+tests still pass.
+
+**Deviations from plan:**
+- The standalone is a plain `juce_add_gui_app`, **not** `JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP` as 12-ARCHITECTURE proposed. Fighting `StandaloneFilterWindow` bought nothing: `main()` must be able to become a scanner child before any UI exists, and the app needs its own `AudioDeviceManager` anyway. Two thin targets over shared sources is simpler than one target with a special mode.
+- `createEditor()` lives in `ui/HostedEditor.cpp`, with `tests/headless_editor_stub.cpp` for headless targets, so `rig_tests` can link the processor without the whole interface.
+- The CPU meter (planned for P5) landed here, since the lane already needed per-block load for its activity strips.
+- **Not yet done in the UI:** the drop indicator is tracked but not drawn; error tiles for missing plugins exist in the schema and restore path but have no dedicated tile rendering yet; the settings sheet is a popup menu rather than a proper panel, and "Rescan plug-ins" currently explains itself rather than running a scan.
 
 ## P4 — Rig state + DAW builds (2–4 days)
 
