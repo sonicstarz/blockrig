@@ -33,6 +33,7 @@ private:
     bool keyPressed(const juce::KeyPress&, juce::Component*) override;
 
     void showSettings();
+    void startScan();
     void updatePanel();
     void showIoPanel(EndBlock::Kind kind);
 

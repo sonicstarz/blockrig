@@ -165,6 +165,69 @@ private:
     juce::ComboBox mMode;
     juce::TextButton mDeviceButton;
 };
+
+/// Runs a plug-in scan on its own thread behind a progress window.
+///
+/// Scanning loads every plug-in on the machine in a child process and takes
+/// minutes, so it cannot block the message thread. Deletes itself when done.
+class ScanJob final : public juce::ThreadWithProgressWindow
+{
+public:
+    ScanJob(PluginCatalog& catalog, std::function<void()> onComplete)
+        : juce::ThreadWithProgressWindow("Scanning plug-ins", true, true)
+        , mCatalog(catalog)
+        , mOnComplete(std::move(onComplete))
+    {
+        setStatusMessage("Looking for plug-ins...");
+    }
+
+    void run() override
+    {
+        mSummary = mCatalog.scanAllFormats(
+            [this](const PluginCatalog::ScanProgress& progress) {
+                if (progress.total > 0)
+                    setProgress(static_cast<double>(progress.scanned) / progress.total);
+
+                setStatusMessage(juce::String(progress.scanned) + " of " + juce::String(progress.total)
+                                 + "   •   " + juce::String(progress.found) + " found\n"
+                                 + progress.currentPluginName);
+            },
+            [this] { return threadShouldExit(); });
+    }
+
+    void threadComplete(bool userPressedCancel) override
+    {
+        juce::String message;
+
+        if (userPressedCancel)
+            message = "Scan cancelled. " + juce::String(mSummary.found) + " plug-ins were added before stopping.";
+        else
+            message = juce::String(mSummary.found) + " plug-ins found from " + juce::String(mSummary.scanned)
+                      + " scanned.";
+
+        if (mSummary.denylisted > 0)
+            message += "\n\n" + juce::String(mSummary.denylisted)
+                       + " plug-in(s) crashed or hung and were skipped:\n"
+                       + mSummary.denylistedNames.joinIntoString("\n");
+
+        juce::NativeMessageBox::showAsync(juce::MessageBoxOptions()
+                                              .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                              .withTitle("Plug-in scan")
+                                              .withMessage(message)
+                                              .withButton("OK"),
+                                          nullptr);
+
+        if (mOnComplete)
+            mOnComplete();
+
+        delete this;
+    }
+
+private:
+    PluginCatalog& mCatalog;
+    std::function<void()> mOnComplete;
+    PluginCatalog::ScanSummary mSummary;
+};
 } // namespace
 
 MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* deviceManager)
@@ -287,6 +350,33 @@ void MainView::showIoPanel(EndBlock::Kind kind)
     resized();
 }
 
+void MainView::startScan()
+{
+    // Scanning relaunches this executable as a child process for each plug-in.
+    // That works from the app; inside a DAW the executable is the host's, so the
+    // scan has to happen in the app instead.
+    if (mProcessor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+    {
+        juce::NativeMessageBox::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::InfoIcon)
+                .withTitle("Scan in the BlockRig app")
+                .withMessage("Scanning loads every plug-in on this machine in a separate process, which needs "
+                             "the BlockRig app rather than a plug-in inside a DAW.\n\nOpen BlockRig, scan "
+                             "there, and this plug-in will pick up the same list.")
+                .withButton("OK"),
+            nullptr);
+        return;
+    }
+
+    // Owns itself; deletes on completion.
+    auto* job = new ScanJob(mProcessor.getCatalog(), [this] {
+        mProcessor.getCatalog().saveToStorage();
+    });
+
+    job->launchThread();
+}
+
 void MainView::showSettings()
 {
     juce::PopupMenu menu;
@@ -306,19 +396,7 @@ void MainView::showSettings()
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mSettingsButton), [this](int choice) {
         switch (choice)
         {
-            case 1:
-                // Scanning is a minutes-long, out-of-process affair; the plug-in
-                // build points at the app rather than doing it inside a DAW.
-                juce::NativeMessageBox::showAsync(
-                    juce::MessageBoxOptions()
-                        .withIconType(juce::MessageBoxIconType::InfoIcon)
-                        .withTitle("Rescan plug-ins")
-                        .withMessage("Scanning loads every plug-in on this machine in a separate process and "
-                                     "takes a few minutes. It is best done in the BlockRig app rather than "
-                                     "inside a DAW.")
-                        .withButton("OK"),
-                    nullptr);
-                break;
+            case 1: startScan(); break;
             case 2:
                 mEditorWindows.setAlwaysOnTop(!mEditorWindows.getAlwaysOnTop());
                 break;
