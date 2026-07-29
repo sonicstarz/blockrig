@@ -186,7 +186,14 @@ if(NAMMODELER_BUILD_TESTS)
     target_sources(chain_tests PRIVATE
         tests/chain_tests.cpp
         src/host/BlockChain.cpp
-        src/host/BlockInstance.cpp)
+        src/host/BlockInstance.cpp
+        src/host/InternalBlockFormat.cpp
+        src/blocks/nam/NamBlockProcessor.cpp
+        src/dsp/AmpSlot.cpp
+        src/dsp/ToneStack.cpp
+        src/dsp/ResamplingNam.cpp
+        src/dsp/ModelLoader.cpp
+        src/state/PluginState.cpp)
 
     target_include_directories(chain_tests PRIVATE src)
 
@@ -199,6 +206,7 @@ if(NAMMODELER_BUILD_TESTS)
         JUCE_MODAL_LOOPS_PERMITTED=1)
 
     target_link_libraries(chain_tests PRIVATE
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_dsp
@@ -244,5 +252,6 @@ if(NAMMODELER_BUILD_TESTS)
              COMMAND dsp_tests "${NAM_CORE_DIR}/example_models")
     add_test(NAME plugin_tests
              COMMAND plugin_tests "${NAM_CORE_DIR}/example_models")
-    add_test(NAME chain_tests COMMAND chain_tests)
+    add_test(NAME chain_tests
+             COMMAND chain_tests "${NAM_CORE_DIR}/example_models")
 endif()

@@ -8,7 +8,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include "blocks/nam/NamBlockProcessor.h"
 #include "host/BlockChain.h"
+#include "host/InternalBlockFormat.h"
 
 namespace
 {
@@ -33,6 +35,13 @@ int gUidCounter = 0;
 void discoverPlugins()
 {
     juce::addDefaultFormatsToManager(gFormats);
+
+    // Built-in blocks are served through the same format interface, so they end
+    // up in the same list as scanned plug-ins.
+    auto internalFormat = std::make_unique<blockrig::InternalBlockFormat>();
+    for (const auto& description : internalFormat->getAllTypes())
+        gAvailable.add(new juce::PluginDescription(description));
+    gFormats.addFormat(std::move(internalFormat));
 
     for (auto* format : gFormats.getFormats())
     {
@@ -384,11 +393,102 @@ void testMixedFormatChain()
     check(render(chain, 16), "AU and VST3 render together in one chain");
     check(chain.getNumBlocks() == 2, "both formats coexist in the lane");
 }
+void testNamBlock(const juce::File& modelsDir)
+{
+    std::printf("\nBuilt-in NAM block\n");
+
+    const auto* namDescription = findDescription("NAM");
+    check(namDescription != nullptr, "the NAM block appears as a normal plug-in description");
+    if (namDescription == nullptr)
+        return;
+
+    check(namDescription->pluginFormatName == blockrig::NamBlockProcessor::kFormatName,
+          "NAM block advertises the built-in format");
+
+    blockrig::BlockChain chain;
+    chain.prepare(kSampleRate, kBlockSize);
+
+    auto block = makeBlock(*namDescription);
+    check(block != nullptr, "NAM block instantiated through the format");
+    if (block == nullptr)
+        return;
+
+    auto* namProcessor = dynamic_cast<blockrig::NamBlockProcessor*>(block->getPlugin());
+    check(namProcessor != nullptr, "block wraps a NamBlockProcessor");
+    if (namProcessor == nullptr)
+        return;
+
+    chain.insertBlock(std::move(block), 0);
+
+    // With no capture loaded the block must pass the lane through, not silence it.
+    float magnitude = 0.0f;
+    check(render(chain, 8, &magnitude), "renders sanely with no capture loaded");
+    check(magnitude > 0.1f, "passes signal through when empty");
+
+    const auto namFile = modelsDir.getChildFile("A2.nam");
+    if (!namFile.existsAsFile())
+    {
+        std::printf("       A2.nam not found; skipping capture load\n");
+        return;
+    }
+
+    namProcessor->loadModel(namFile);
+
+    const auto deadline = juce::Time::getMillisecondCounter() + 20000;
+    bool loaded = false;
+    while (juce::Time::getMillisecondCounter() < deadline && !loaded)
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        loaded = namProcessor->getModelInfo().json.isNotEmpty();
+        if (namProcessor->getModelError().isNotEmpty())
+            break;
+    }
+
+    check(loaded, "capture loaded: " + namProcessor->getModelError());
+    if (!loaded)
+        return;
+
+    magnitude = 0.0f;
+    check(render(chain, 64, &magnitude), "renders sanely with a capture loaded");
+    check(magnitude > 1.0e-4f, "produces audio through the capture");
+    check(chain.getLatencySamples() == 0, "no latency at the model's own sample rate");
+
+    // The amp costs real CPU now, and the chain must attribute it to this block.
+    const float load = chain.getBlockByIndex(0)->getLoad().getAverage();
+    std::printf("       NAM block load: %.3f%% of the buffer budget\n", load * 100.0f);
+    check(load > 0.0f, "NAM block reports a measurable load");
+
+    // State must survive a round trip, including the embedded capture.
+    juce::MemoryBlock state;
+    namProcessor->getStateInformation(state);
+    std::printf("       state size: %.1f KB\n", state.getSize() / 1024.0);
+    check(state.getSize() > 1024, "state carries the embedded capture");
+
+    blockrig::NamBlockProcessor restored;
+    restored.setPlayConfigDetails(2, 2, kSampleRate, kBlockSize);
+    restored.prepareToPlay(kSampleRate, kBlockSize);
+    restored.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+
+    const auto restoreDeadline = juce::Time::getMillisecondCounter() + 20000;
+    bool restoredOk = false;
+    while (juce::Time::getMillisecondCounter() < restoreDeadline && !restoredOk)
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+        restoredOk = restored.getModelInfo().json.isNotEmpty();
+    }
+
+    check(restoredOk, "capture restored from embedded state without touching the file");
+}
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    const juce::File modelsDir = argc > 1
+                                     ? juce::File(juce::String(argv[1]))
+                                     : juce::File::getCurrentWorkingDirectory().getChildFile(
+                                           "third_party/NeuralAmpModelerCore/example_models");
 
     discoverPlugins();
     std::printf("Discovered %d plug-in(s) to test with\n", gAvailable.size());
@@ -404,6 +504,7 @@ int main()
     testCpuAttribution();
     testEditsWhileRendering();
     testMixedFormatChain();
+    testNamBlock(modelsDir);
 
     std::printf("\n%s (%d failure%s)\n", gFailures == 0 ? "ALL CHECKS PASSED" : "CHECKS FAILED", gFailures,
                 gFailures == 1 ? "" : "s");

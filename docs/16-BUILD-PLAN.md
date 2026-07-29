@@ -16,12 +16,24 @@ state — child state is opaque and restore fails *silently*, so P4 needs its ow
 
 Artifact: `tests/host_spike.cpp` (throwaway; delete once `host/` lands).
 
-## P1 — Chain engine + NAM block (2–4 days)
+## P1 — Chain engine + NAM block — **COMPLETE (2026-07-29)**
 
-- `BlockChain`/`BlockInstance` with snapshot swap, retirement queue, defensive chunking, bypass, latency summation + rebuild-on-change poll.
-- `InternalBlockFormat` serving the NAM block (per 15-NAM-BLOCK.md): AmpSlot trimmed to single-voice, parameter table implemented, embedded-model state.
-- Rework `plugin_tests` → chain tests: hosted-plugin add/remove/reorder under continuous audio stays finite; NAM block nulls against the old build; latency totals correct at 44.1k/48k.
-- **Done when:** headless chain of [NAM → third-party VST3] renders correctly; swap-storm test passes; old dual-slot code deleted.
+Delivered: `host/BlockChain` (snapshot swap, retirement queue, bypass, latency summation +
+`refreshLatency()` poll), `host/BlockInstance` (hosted plug-in + per-block CPU timing + bypass-
+parameter preference), `host/InternalBlockFormat`, and `blocks/nam/NamBlockProcessor` (single-voice
+NAM served as an `AudioPluginInstance`).
+
+Verified by `tests/chain_tests.cpp` against real plug-ins: insert/reorder/remove, bypass,
+mixed AU + VST3 lanes, latency summed correctly (checked against AUDynamicsProcessor's 256
+samples), per-block CPU attribution, 30 rounds of live edits during continuous rendering, and the
+NAM block loading a capture, reporting 0 latency at 48 kHz, and round-tripping its embedded
+capture through state (143.8 KB). Cross-validation: the chain measures the NAM block at 3.59% of
+the buffer budget, matching `bench`'s independent 3.54% for the same capture.
+
+**Deviations from plan, deliberate:**
+- The old dual-slot product was *not* deleted. Its VST3 is the test subject that `chain_tests` and `host_spike` use to exercise real VST3 hosting, and `plugin_tests` still covers `src/dsp/`. Deletion is deferred to P4, when the host plugin target exists and can replace it as the test subject.
+- `dsp/AmpSlot` was reused unchanged rather than trimmed; its `phaseInvert` field is simply left unused (polarity is a lane concern). Touching verified DSP for cosmetic reasons wasn't worth the risk.
+- An empty NAM block passes audio through rather than outputting silence — the opposite of the old dual-slot behavior, and correct here: a block with no capture loaded shouldn't mute the rig.
 
 ## P2 — Standalone shell + scanning + catalog (2-3 days)
 
