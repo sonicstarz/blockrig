@@ -1,36 +1,42 @@
-# CLAUDE.md — NAM Modeler
+# CLAUDE.md — BlockRig (working title)
 
-Dual-capture stereo NAM plugin (VST3/AU/Standalone, JUCE + NeuralAmpModelerCore). **Currently in
-planning phase — read `docs/` before writing any code.**
+Block-based rig host (standalone + VST3/AU) hosting third-party VST3/AU blocks plus a built-in
+NAM amp block. **Pivoted 2026-07-29; design done, host code not started.** The repo currently
+contains the previous incarnation (dual-slot NAM plugin, working, tests green) whose `src/dsp/`
+engine is carried forward as the NAM block.
 
 ## Read first, in order
 
-1. `docs/05-BUILD-PLAN.md` — what to build next (phased milestones with acceptance criteria)
-2. `docs/02-ARCHITECTURE.md` — how (signal flow, threading, RT-safety rules, state format)
-3. `docs/03-PARAMETERS.md` — exact parameter IDs/ranges/defaults (IDs freeze at first release)
-4. `docs/01-RESEARCH.md` — the facts behind decisions + **VERIFY items to resolve in M0**
-5. `docs/04-CAPTURE.md` — capture-wizard design (M5+ only)
+1. `docs/16-BUILD-PLAN.md` — what to build next (P0–P6, acceptance criteria)
+2. `docs/12-ARCHITECTURE.md` — chain engine, scanning, threading, deployment
+3. `docs/14-SCHEMA.md` — normative rig state schema (versioned; don't improvise fields)
+4. `docs/15-NAM-BLOCK.md` — NAM block spec + exact reuse map of existing code
+5. `docs/13-UI-UX.md` / `docs/11-RESEARCH.md` — UI decisions / research basis
+6. `docs/archive-nam-plugin/01-RESEARCH.md` §"Verified during M0" — hard-won NAM facts
 
 ## Hard rules
 
-- **Audio thread**: no allocation, locks, file I/O, JSON parsing, logging, model destruction, `Reset()`, `prewarm()`, or `SetSlimmableSize()`. Model swaps go through the staging/retirement pattern in 02-ARCHITECTURE.
-- `nam::DSP::GetLoudness()` **throws** if the model lacks loudness — always check `HasLoudness()` first (same for input/output level).
-- Prewarm off the audio thread at load time, never in `processBlock`.
-- Don't reimplement NAM training in C++ — training is the bundled Python helper (04-CAPTURE). Don't fork the trainer; pin and invoke it.
-- Match official-plugin DSP constants exactly (tone stack, gate, DC blocker, output-mode math — listed in 01-RESEARCH §4) so captures A/B identically.
-- Parameter IDs and choice-parameter index order are frozen once released — additive changes only.
-- Milestone acceptance checks in 05-BUILD-PLAN are the definition of done — run them, don't skip to the next milestone.
+- **Audio thread**: no allocation, locks, file I/O, JSON parsing, logging, or destruction. All chain edits build snapshots on the message thread; swap via atomic pointer; free via retirement queue. (Pattern already proven in `src/dsp/AmpSlot`.)
+- `nam_core` links with `$<LINK_LIBRARY:WHOLE_ARCHIVE,...>` — otherwise every model fails to load ("No config parser registered"). Never "clean up" this line.
+- A2 detection is `dynamic_cast<nam::SlimmableModel*>`, never architecture-name matching.
+- `GetLoudness()`/`GetInputLevel()`/`GetOutputLevel()` throw when metadata is absent — check `Has*()` first.
+- Plugin scanning is **out-of-process only** (+ dead-man's pedal + denylist + 60 s watchdog). Never scan in-process outside a debug flag.
+- No VST2 hosting (licensing). Element source is GPL — read, never copy.
+- Schema changes follow `docs/14-SCHEMA.md` migration policy; `schemaVersion` bumps only on breaking shape changes, with fixture-tested migrations.
+- Existing `dsp_tests`/`bench` stay green through every phase; run `ctest --test-dir build` before claiming any phase done.
+- Match official NAM plugin DSP constants exactly (tone stack, gate, DC blocker, output-mode math) — they're what makes captures sound "right".
 
 ## Stack
 
-JUCE 8/9 (CMake, `juce_add_plugin`), C++20, NeuralAmpModelerCore ≥ v0.5.4 as submodule with
-`NAM_ENABLE_A2_FAST=ON`, AudioDSPTools for ResamplingContainer/gate. Core uses `double` samples
-(convert at slot boundary) and nlohmann/json in its public API. All licenses permissive — see
-README licensing table.
+JUCE 8.0.x (bump past 8.0.9 in P0 — VST3 hosting regression) + CMake, C++20;
+NeuralAmpModelerCore v0.5.4 (`NAM_ENABLE_A2_FAST=ON`); hosting via `JUCE_PLUGINHOST_VST3=1` /
+`JUCE_PLUGINHOST_AU=1`; custom standalone shell (`JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1`);
+melatonin_blur/_inspector for UI. `extras/AudioPluginHost` in the JUCE tree is the reference for
+scanning, InternalPluginFormat, and PluginWindow patterns.
 
-## Verify before relying on (flagged during 2026-07 research)
+## Verify before relying on (P0 checklist, from research)
 
-- Exact `"architecture"` strings for A2/container models in `.nam` files (read Core source)
-- "A2 Lite/Full" vs "nano/standard" naming
-- MPS training wall-clock on this machine (M0 experiment)
-- TONE3000 upload API existence (assume none; link-out flow)
+- JUCE version's VST3 hosting status + `juce_audio_processors_headless` module split
+- VST3 SDK MIT text in the bundled SDK
+- Hosted-plugin CPU overhead benchmark (unconfirmed 7× report — gate on this)
+- AU instantiation inside Logic; settings-file paths under DAW sandboxes

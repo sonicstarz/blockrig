@@ -1,8 +1,30 @@
-# NAM Modeler — Dual-Capture Stereo NAM Plugin
+# BlockRig (working title) — block-based rig host with built-in NAM
 
-**Status: the plugin builds and runs.** The audio engine (milestones M0–M4) is complete and
-verified; the editor is functional but not yet visually designed; the capture wizard (M5/M6) is
-designed but not built. See [docs/05-BUILD-PLAN.md](docs/05-BUILD-PLAN.md) for exact status.
+**Status: pivoted 2026-07-29 — design complete, host implementation not started.** The previous
+incarnation (a dual-capture NAM plugin) was built and verified through its M4 milestone; its DSP
+engine survives as this product's built-in NAM block, and its plugin builds still compile and
+pass tests.
+
+**The product:** a good-looking standalone app *and* VST3/AU plugin where you pick an audio
+input, an output, and chain blocks in between — each block being the built-in NAM amp modeler or
+any VST3/AudioUnit installed on your machine. Horizontal pedalboard lane UX, managed floating
+windows for third-party editors, per-block CPU metering, portable rig files with embedded plugin
+state.
+
+## Documents (read in order for the current product)
+
+| Doc | Contents |
+|---|---|
+| [docs/10-PRODUCT.md](docs/10-PRODUCT.md) | Product brief, v1 scope, positioning, success criteria |
+| [docs/11-RESEARCH.md](docs/11-RESEARCH.md) | Hosting/UX research findings + open verification items |
+| [docs/12-ARCHITECTURE.md](docs/12-ARCHITECTURE.md) | Chain engine (why not AudioProcessorGraph), scanning, CPU meter, dual deployment |
+| [docs/13-UI-UX.md](docs/13-UI-UX.md) | Lane design, editor-window policy, meter UX, visual direction |
+| [docs/14-SCHEMA.md](docs/14-SCHEMA.md) | Normative rig state schema (`.blockrig` file == DAW chunk) |
+| [docs/15-NAM-BLOCK.md](docs/15-NAM-BLOCK.md) | Built-in NAM block spec + reuse map from existing code |
+| [docs/16-BUILD-PLAN.md](docs/16-BUILD-PLAN.md) | Phases P0–P6 with acceptance criteria and risks |
+| [docs/archive-nam-plugin/](docs/archive-nam-plugin/) | First incarnation's docs (verified NAM facts, deferred capture design) |
+
+## Current build (previous incarnation — still green)
 
 ```bash
 git submodule update --init --recursive
@@ -11,44 +33,13 @@ cmake --build build --parallel 8
 ctest --test-dir build --output-on-failure
 ```
 
-Builds VST3, AU and Standalone. On macOS the plugins are copied into your user plug-in folders
-automatically, and `auval -v aufx Nmd1 Nmdl` passes.
+Builds the dual-slot NAM plugin (VST3/AU/Standalone; `auval` passes). `src/dsp/` — the part that
+matters going forward — is covered by `dsp_tests` and benchmarked by `bench` (A2 ≈ 3.4% of one
+core per instance at 48 kHz/128).
 
-A low-latency stereo audio plugin (VST3 / AU / Standalone) that runs **two Neural Amp Modeler
-captures simultaneously** — including the new **NAM A2** architecture — each pannable left/right,
-with per-amp input/output trim and a 3-band amp-style tone stack. It also includes a **capture
-wizard** for creating new `.nam` captures of real amps and pedals.
+## Licensing
 
-## Feature summary
-
-- Two independent NAM amp slots (A and B), each loading any `.nam` file (A1 WaveNet, LSTM, ConvNet, Linear, and A2 including slimmable models)
-- Per-slot signal chain: input trim → NAM model → 3-band tone stack (Bass/Mid/Treble) → output trim → pan
-- Stereo routing: mono guitar into both amps (the primary use case) or true stereo (L→A, R→B); constant-power panning; per-slot phase invert, solo, and mute
-- Every parameter NAM exposes, surfaced per slot: output mode (Raw / Normalized / Calibrated), input calibration level (dBu), and A2 slimmable model size
-- Zero algorithmic latency at 48 kHz; transparent high-quality resampling (with host latency reporting) at other sample rates
-- Plugin state embeds the full `.nam` model data, so sessions survive moved/deleted files and transfer between machines
-- Capture creation: guided capture session (plays the official NAM test signal, records the return, validates alignment and quality in real time) with local training via the official MIT-licensed NAM trainer
-
-## Documents
-
-| Doc | Contents |
-|---|---|
-| [docs/01-RESEARCH.md](docs/01-RESEARCH.md) | Condensed research findings: NAM Core API, A2 architecture, `.nam` format, CPU/latency facts, prior art, licensing — with sources |
-| [docs/02-ARCHITECTURE.md](docs/02-ARCHITECTURE.md) | Technical architecture: framework, signal flow, threading model, real-time safety, resampling/latency, state format |
-| [docs/03-PARAMETERS.md](docs/03-PARAMETERS.md) | Complete parameter specification: IDs, ranges, defaults, skews, automation behavior |
-| [docs/04-CAPTURE.md](docs/04-CAPTURE.md) | Capture-creation feature design: recording flow, validation checks, training pipeline |
-| [docs/05-BUILD-PLAN.md](docs/05-BUILD-PLAN.md) | Phased implementation plan with milestones, acceptance criteria, and verification steps |
-| [CLAUDE.md](CLAUDE.md) | Standing guidance for the implementing agent |
-
-## Key decisions (rationale in the docs)
-
-1. **Framework: JUCE 8/9 + CMake** (free Starter tier; `juce::dsp` covers filters/pan/smoothing; best-documented path for VST3+AU+Standalone from one target). NAM Core is framework-agnostic C++ and is used directly.
-2. **Engine: NeuralAmpModelerCore v0.5.4+** (MIT) with `NAM_ENABLE_A2_FAST=ON` — official A2 support including the hand-optimized fast path.
-3. **Latency policy**: no added latency at 48 kHz (models are causal, zero lookahead); Lanczos resampling via AudioDSPTools' `ResamplingContainer` pattern otherwise, reported to the host.
-4. **Tone stack**: the official NAM plugin's proven biquad constants (Bass 150 Hz / Mid 425 Hz adaptive-Q / Treble 1.8 kHz), per slot, post-model.
-5. **State**: embed `.nam` JSON per slot (50–300 KB each — trivial), keep the original path only as display/re-link metadata.
-6. **Capture**: recording + validation in C++ inside the plugin/standalone; training handed to a bundled-Python helper running the unmodified official `neural-amp-modeler` trainer (MPS-accelerated on Apple Silicon), with "upload to TONE3000" as the documented cloud alternative. No C++ training fork.
-
-## Licensing at a glance
-
-Everything in the required chain is permissive: NeuralAmpModelerCore (MIT), A2 architecture/training/inference (MIT), nlohmann/json (MIT), Eigen 5.x (fully MPL-2.0, file-level copyleft only), neural-amp-modeler Python trainer (MIT), PyTorch (BSD-3). JUCE is free (Starter) up to $20k annual revenue with no splash screen, or AGPLv3 if the plugin is open-sourced, or $800 perpetual Indie. **No GPL anywhere.**
+All permissive: NeuralAmpModelerCore MIT (must link `WHOLE_ARCHIVE` — see archived research),
+VST3 SDK MIT (Steinberg relicense, Nov 2025 — attribution required), AU via Apple system API,
+Eigen MPL-2.0, JUCE Starter/AGPL/commercial (choose at release), melatonin modules MIT. No VST2
+hosting (legally closed). Kushview Element is GPL: reference only, never copy.
