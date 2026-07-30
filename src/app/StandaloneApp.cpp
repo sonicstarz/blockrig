@@ -264,7 +264,7 @@ private:
         logFile.replaceWithText(lines.joinIntoString("\n") + "\n");
 
         // Keep sampling levels so the log shows whether audio is flowing.
-        mStatusLogger = std::make_unique<StatusLogger>(*mProcessor, logFile);
+        mStatusLogger = std::make_unique<StatusLogger>(*mProcessor, logFile, mDeviceManager);
     }
 
     /// Scans on a background thread, printing progress, then quits. Same code
@@ -305,9 +305,11 @@ private:
     class StatusLogger final : private juce::Timer
     {
     public:
-        StatusLogger(BlockRigProcessor& processor, juce::File file)
+        StatusLogger(BlockRigProcessor& processor, juce::File file,
+                     juce::AudioDeviceManager& deviceManager)
             : mProcessor(processor)
             , mFile(std::move(file))
+            , mDeviceManager(deviceManager)
         {
             startTimer(500);
         }
@@ -323,6 +325,21 @@ private:
             if (++mTicks % 4 != 0)
                 return;
 
+            // The device usually opens after the header is written, because macOS
+            // grants microphone access asynchronously. Reporting it once at
+            // startup made every log say "no audio device" regardless.
+            const auto deviceName = mDeviceManager.getCurrentAudioDevice() != nullptr
+                                      ? mDeviceManager.getCurrentAudioDevice()->getName()
+                                      : juce::String("none");
+
+            if (deviceName != mLastDevice)
+            {
+                mLastDevice = deviceName;
+                mFile.appendText("device now: " + deviceName + "   processor "
+                                 + juce::String(mProcessor.getTotalNumInputChannels()) + " in / "
+                                 + juce::String(mProcessor.getTotalNumOutputChannels()) + " out\n");
+            }
+
             const auto blocks = mProcessor.getProcessBlockCount();
 
             const auto probe = mProcessor.getWidthProbe();
@@ -337,6 +354,27 @@ private:
                              + juce::String(probe.afterChain, 5) + "  out "
                              + juce::String(probe.atOutput, 5) + "]\n");
 
+            // What each block actually negotiated, in the running app. The
+            // harness kept reporting the right layouts while the app did not, so
+            // the layouts have to be readable from here too.
+            juce::StringArray layouts;
+
+            for (auto* block : mProcessor.getChain().getBlocks())
+                if (auto* plugin = block->getPlugin())
+                    layouts.add(block->getDisplayName() + " " + juce::String(plugin->getTotalNumInputChannels())
+                                + "/" + juce::String(plugin->getTotalNumOutputChannels())
+                                + (block->getSourceIsMono() ? " fedMONO" : " fedST"));
+
+            if (layouts.isEmpty())
+                layouts.add("(empty)");
+
+            if (layouts.joinIntoString(", ") != mLastLayouts)
+            {
+                mLastLayouts = layouts.joinIntoString(", ");
+                mFile.appendText("chain[source " + juce::String(mProcessor.sourceIsMono() ? "MONO" : "stereo")
+                                 + "]: " + mLastLayouts + "\n");
+            }
+
             mLastBlockCount = blocks;
             mPeakIn = 0.0f;
             mPeakOut = 0.0f;
@@ -347,6 +385,9 @@ private:
         float mPeakIn = 0.0f, mPeakOut = 0.0f;
         int mTicks = 0;
         juce::int64 mLastBlockCount = 0;
+        juce::String mLastLayouts;
+        juce::AudioDeviceManager& mDeviceManager;
+        juce::String mLastDevice;
     };
 
     std::unique_ptr<StatusLogger> mStatusLogger;
@@ -425,7 +466,7 @@ private:
             const auto blocks = mProcessor->getChain().getBlocks();
 
             for (auto* block : blocks)
-                block->prepare(sampleRate, blockSize);
+                block->prepare(sampleRate, blockSize, block->getSourceIsMono());
 
             for (int pass = 0; pass <= 120; ++pass)
             {
