@@ -295,6 +295,69 @@ private:
 };
 } // namespace
 
+namespace
+{
+/// Embeds a hosted plug-in's own editor in the Block tab.
+///
+/// A generic parameter list is a poor substitute for the interface a plug-in was
+/// designed around, so the real editor goes here. Editors size themselves and are
+/// often taller than the tab, hence the viewport.
+class EmbeddedPluginEditor final : public juce::Component
+{
+public:
+    EmbeddedPluginEditor(juce::AudioPluginInstance& plugin, std::function<void()> onDetach)
+        : mOnDetach(std::move(onDetach))
+    {
+        mEditor.reset(plugin.createEditorIfNeeded());
+
+        if (mEditor != nullptr)
+        {
+            mViewport.setViewedComponent(mEditor.get(), false);
+            mViewport.setScrollBarsShown(true, true);
+            addAndMakeVisible(mViewport);
+        }
+
+        mDetach.setButtonText("Open in window");
+        mDetach.onClick = [this] {
+            if (mOnDetach)
+                mOnDetach();
+        };
+        addAndMakeVisible(mDetach);
+
+        mName.setText(plugin.getName(), juce::dontSendNotification);
+        mName.setFont(juce::FontOptions(13.0f, juce::Font::bold));
+        addAndMakeVisible(mName);
+    }
+
+    ~EmbeddedPluginEditor() override
+    {
+        // Detach before destruction: the editor belongs to the plug-in, and it
+        // may be handed to a floating window next.
+        mViewport.setViewedComponent(nullptr, false);
+        mEditor.reset();
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(theme::metrics::gap);
+        auto header = area.removeFromTop(26);
+        mDetach.setBounds(header.removeFromRight(140).reduced(2, 0));
+        mName.setBounds(header);
+        area.removeFromTop(4);
+        mViewport.setBounds(area);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(theme::colours::panel); }
+
+private:
+    std::unique_ptr<juce::AudioProcessorEditor> mEditor;
+    juce::Viewport mViewport;
+    juce::TextButton mDetach;
+    juce::Label mName;
+    std::function<void()> mOnDetach;
+};
+} // namespace
+
 //==============================================================================
 void MainView::PanelHolder::setPanel(std::unique_ptr<juce::Component> panel)
 {
@@ -477,9 +540,43 @@ void MainView::updatePanel()
     std::unique_ptr<juce::Component> panel;
 
     if (auto* nam = dynamic_cast<NamBlockProcessor*>(block->getPlugin()))
+    {
         panel = std::make_unique<NamBlockPanel>(*nam);
+    }
     else if (auto* plugin = block->getPlugin())
-        panel = std::make_unique<juce::GenericAudioProcessorEditor>(*plugin);
+    {
+        if (mEditorWindows.isOpen(uid))
+        {
+            // Its editor is in a floating window; an editor cannot live in two
+            // places, so say so rather than showing an empty panel.
+            auto note = std::make_unique<juce::Label>();
+            note->setText(plugin->getName() + " is open in its own window.\n\n"
+                              + "Close that window to bring the interface back here.",
+                          juce::dontSendNotification);
+            note->setJustificationType(juce::Justification::centred);
+            note->setColour(juce::Label::textColourId, theme::colours::textFaint);
+            panel = std::move(note);
+        }
+        else if (plugin->hasEditor())
+        {
+            panel = std::make_unique<EmbeddedPluginEditor>(*plugin, [this, uid] {
+                if (auto* target = mProcessor.getChain().getBlockByUid(uid))
+                    if (auto* pluginToShow = target->getPlugin())
+                    {
+                        // Drop the embedded copy first: one editor, one home.
+                        mBlockTab.setPanel(nullptr);
+                        mEditorWindows.show(uid, *pluginToShow);
+                        mLane.refresh();
+                        updatePanel();
+                    }
+            });
+        }
+        else
+        {
+            // No interface of its own; the parameter list is the honest fallback.
+            panel = std::make_unique<juce::GenericAudioProcessorEditor>(*plugin);
+        }
+    }
 
     mBlockTab.setPanel(std::move(panel));
     mTabs.setCurrentTabIndex(0);

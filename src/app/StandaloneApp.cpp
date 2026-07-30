@@ -55,6 +55,14 @@ public:
             return;
         }
 
+        // Reports what the audio device is actually giving us, which is the only
+        // way to tell "no signal" apart from "no input channel enabled".
+        if (commandLine.contains("--audio-check"))
+        {
+            runAudioCheck();
+            return;
+        }
+
         mProcessor = std::make_unique<BlockRigProcessor>();
         mProcessor->getCatalog().setStorageDirectory(getStorageDirectory());
         mProcessor->getCatalog().loadFromStorage();
@@ -73,6 +81,9 @@ public:
     {
         if (mScanThread.joinable())
             mScanThread.join();
+
+        if (mCheckThread.joinable())
+            mCheckThread.join();
 
         mCatalogForScan = nullptr;
         mMainWindow = nullptr;
@@ -154,6 +165,74 @@ private:
         });
     }
 
+    /// Prints the real audio configuration and measures the input for a few
+    /// seconds. Diagnostic, but also the fastest way for a user to answer "is my
+    /// guitar reaching this app at all".
+    void runAudioCheck()
+    {
+        mProcessor = std::make_unique<BlockRigProcessor>();
+        mProcessor->setMuted(true); // measuring input only; do not make noise
+        setUpAudio();
+
+        auto* device = mDeviceManager.getCurrentAudioDevice();
+
+        if (device == nullptr)
+        {
+            std::printf("No audio device could be opened.\n");
+            juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
+            return;
+        }
+
+        const auto setup = mDeviceManager.getAudioDeviceSetup();
+
+        std::printf("Device type : %s\n", mDeviceManager.getCurrentAudioDeviceType().toRawUTF8());
+        std::printf("Device      : %s\n", device->getName().toRawUTF8());
+        std::printf("Sample rate : %.0f Hz, buffer %d\n", device->getCurrentSampleRate(),
+                    device->getCurrentBufferSizeSamples());
+
+        const auto inputNames = device->getInputChannelNames();
+        const auto activeIn = device->getActiveInputChannels();
+        const auto activeOut = device->getActiveOutputChannels();
+
+        std::printf("Inputs      : %d available, %d active\n", inputNames.size(),
+                    activeIn.countNumberOfSetBits());
+
+        for (int i = 0; i < inputNames.size(); ++i)
+            if (activeIn[i])
+                std::printf("              [%d] %s  ACTIVE\n", i + 1, inputNames[i].toRawUTF8());
+
+        std::printf("Outputs     : %d active\n", activeOut.countNumberOfSetBits());
+        std::printf("Processor   : %d in / %d out\n", mProcessor->getTotalNumInputChannels(),
+                    mProcessor->getTotalNumOutputChannels());
+        std::printf("\nListening for 6 seconds — play something...\n");
+        std::fflush(stdout);
+
+        // Sample the processor's own input meter, which is what the UI shows.
+        mCheckThread = std::thread([this] {
+            float loudest = 0.0f;
+
+            for (int i = 0; i < 60; ++i)
+            {
+                juce::Thread::sleep(100);
+                const auto level = mProcessor->getInputLevel();
+                loudest = juce::jmax(loudest, level);
+
+                if (i % 10 == 9)
+                {
+                    std::printf("  %ds: peak %.4f (%.1f dBFS)\n", (i + 1) / 10, loudest,
+                                loudest > 0.0f ? juce::Decibels::gainToDecibels(loudest) : -120.0f);
+                    std::fflush(stdout);
+                }
+            }
+
+            std::printf("\n%s\n", loudest > 0.0005f
+                                       ? "SIGNAL REACHED THE APP."
+                                       : "NO SIGNAL — the app sees silence on its input channels.");
+            std::fflush(stdout);
+            juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
+        });
+    }
+
     /// A multi-channel interface can come up with every input channel disabled,
     /// which looks exactly like a broken app: signal reaches the interface but
     /// never reaches us. If nothing is enabled, turn the first input on.
@@ -221,6 +300,7 @@ private:
     std::unique_ptr<PluginScannerWorker> mScannerWorker;
     std::unique_ptr<PluginCatalog> mCatalogForScan;
     std::thread mScanThread;
+    std::thread mCheckThread;
     std::unique_ptr<BlockRigProcessor> mProcessor;
     juce::AudioDeviceManager mDeviceManager;
     juce::AudioProcessorPlayer mPlayer;

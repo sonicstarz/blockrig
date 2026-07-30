@@ -74,6 +74,11 @@ public:
 
     juce::String getDisplayName() const;
 
+    /// True when the plug-in could only be configured mono. Such a block is fed
+    /// the mono sum and its result copied to both sides, rather than being left
+    /// to process the left channel and pass the right through untouched.
+    bool isMonoOnly() const noexcept { return mMonoOnly; }
+
     void setBypassed(bool shouldBypass) noexcept { mBypassed.store(shouldBypass, std::memory_order_relaxed); }
     bool isBypassed() const noexcept { return mBypassed.load(std::memory_order_relaxed); }
 
@@ -99,6 +104,8 @@ private:
 
     std::atomic<bool> mBypassed{false};
     bool mLastAppliedBypass = false;
+    bool mMonoOnly = false;
+    juce::AudioBuffer<float> mMonoScratch;
 
     BlockLoad mLoad;
     std::atomic<float> mOutputLevel{0.0f};

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 namespace blockrig::theme
@@ -74,8 +75,15 @@ public:
     juce::Font getPopupMenuFont() override;
 };
 
-/// Draws a level meter as a horizontal bar. Shared by the I/O blocks and the
-/// per-block activity strips.
+/// Range a meter displays. Guitar sits around -30 to -12 dBFS, which on a linear
+/// scale is a barely visible sliver — so meters are drawn in dB.
+inline constexpr float kMeterFloorDb = -60.0f;
+
+/// Maps a linear peak (0..1) onto 0..1 of the meter's length, in dB.
+float levelToMeterPosition(float linearLevel);
+
+/// Draws a level meter as a bar. Shared by the I/O blocks and the per-block
+/// strips. `level` is a linear peak; the scaling to dB happens here.
 void drawLevelMeter(juce::Graphics& g, juce::Rectangle<float> bounds, float level, bool vertical = false);
 
 } // namespace blockrig::theme

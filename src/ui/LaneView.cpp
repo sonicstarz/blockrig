@@ -59,7 +59,9 @@ void BlockTile::setEditorOpen(bool isOpen)
 
 void BlockTile::setActivity(float level)
 {
-    if (std::abs(mActivity - level) < 0.01f)
+    // Compare in meter space: a 0.01 linear threshold is enormous down at the
+    // levels a guitar actually produces.
+    if (std::abs(theme::levelToMeterPosition(mActivity) - theme::levelToMeterPosition(level)) < 0.004f)
         return;
     mActivity = level;
     repaint();
@@ -205,7 +207,7 @@ EndBlock::EndBlock(Kind kind)
 
 void EndBlock::setLevel(float level)
 {
-    if (std::abs(mLevel - level) < 0.01f)
+    if (std::abs(theme::levelToMeterPosition(mLevel) - theme::levelToMeterPosition(level)) < 0.004f)
         return;
     mLevel = level;
     repaint();

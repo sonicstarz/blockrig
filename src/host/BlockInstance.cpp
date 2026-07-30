@@ -22,10 +22,48 @@ void BlockInstance::prepare(double sampleRate, int maxBlockSize)
     if (mPlugin == nullptr)
         return;
 
-    // Everything in the lane is stereo; JUCE negotiates what the plug-in can
-    // actually do, and mono plug-ins get handled by the chain's channel setup.
-    mPlugin->setPlayConfigDetails(mPlugin->getTotalNumInputChannels() > 0 ? 2 : 0, 2, sampleRate, maxBlockSize);
+    // Negotiate a stereo layout properly rather than just asking for two
+    // channels. setPlayConfigDetails alone does not consult the plug-in's bus
+    // layouts, so a stereo-capable plug-in could end up mono — processing the
+    // left channel and letting the right pass through untouched, which sounds
+    // exactly like the stereo image being torn in half.
+    const auto stereo = juce::AudioChannelSet::stereo();
+    const auto mono = juce::AudioChannelSet::mono();
+
+    const auto tryLayout = [this](const juce::AudioChannelSet& in, const juce::AudioChannelSet& out) {
+        auto layout = mPlugin->getBusesLayout();
+
+        if (layout.inputBuses.isEmpty() || layout.outputBuses.isEmpty())
+            return false;
+
+        layout.inputBuses.getReference(0) = in;
+        layout.outputBuses.getReference(0) = out;
+
+        return mPlugin->checkBusesLayoutSupported(layout) && mPlugin->setBusesLayout(layout);
+    };
+
+    mMonoOnly = false;
+
+    if (!tryLayout(stereo, stereo))
+    {
+        if (tryLayout(mono, stereo))
+        {
+            // Mono in, stereo out: feed it the sum, it widens by itself.
+            mMonoOnly = true;
+        }
+        else if (tryLayout(mono, mono))
+        {
+            mMonoOnly = true;
+        }
+        // Otherwise keep whatever the plug-in came up with.
+    }
+
+    mPlugin->setRateAndBufferSizeDetails(sampleRate, maxBlockSize);
     mPlugin->prepareToPlay(sampleRate, maxBlockSize);
+
+    if (mMonoOnly)
+        mMonoScratch.setSize(juce::jmax(1, mPlugin->getTotalNumOutputChannels()), maxBlockSize, false, true, true);
+
     mLoad.reset();
 }
 
@@ -58,10 +96,46 @@ void BlockInstance::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& 
 
     const auto start = juce::Time::getHighResolutionTicks();
 
-    if (bypassed && mBypassParameter == nullptr)
+    if (mMonoOnly && buffer.getNumChannels() >= 2 && mMonoScratch.getNumSamples() >= buffer.getNumSamples())
+    {
+        // Sum to mono, process once, then send the result to both sides. Better
+        // than processing only the left and leaving the right dry.
+        const int numSamples = buffer.getNumSamples();
+        auto* monoData = mMonoScratch.getWritePointer(0);
+
+        juce::FloatVectorOperations::copy(monoData, buffer.getReadPointer(0), numSamples);
+        juce::FloatVectorOperations::add(monoData, buffer.getReadPointer(1), numSamples);
+        juce::FloatVectorOperations::multiply(monoData, 0.5f, numSamples);
+
+        for (int channel = 1; channel < mMonoScratch.getNumChannels(); ++channel)
+            mMonoScratch.clear(channel, 0, numSamples);
+
+        juce::AudioBuffer<float> view(mMonoScratch.getArrayOfWritePointers(), mMonoScratch.getNumChannels(),
+                                      numSamples);
+
+        if (bypassed && mBypassParameter == nullptr)
+            mPlugin->processBlockBypassed(view, midi);
+        else
+            mPlugin->processBlock(view, midi);
+
+        // A mono-out plug-in feeds both sides; a stereo-out one keeps its image.
+        const int produced = juce::jmin(mMonoScratch.getNumChannels(), mPlugin->getTotalNumOutputChannels());
+
+        for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        {
+            const int source = produced > channel ? channel : 0;
+            juce::FloatVectorOperations::copy(buffer.getWritePointer(channel), view.getReadPointer(source),
+                                              numSamples);
+        }
+    }
+    else if (bypassed && mBypassParameter == nullptr)
+    {
         mPlugin->processBlockBypassed(buffer, midi);
+    }
     else
+    {
         mPlugin->processBlock(buffer, midi);
+    }
 
     const auto elapsedSeconds =
         juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - start);

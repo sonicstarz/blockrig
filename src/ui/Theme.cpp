@@ -161,25 +161,52 @@ juce::Font Look::getPopupMenuFont()
     return juce::Font(juce::FontOptions(13.5f));
 }
 
+float levelToMeterPosition(float linearLevel)
+{
+    if (linearLevel <= 0.0f)
+        return 0.0f;
+
+    const auto db = juce::Decibels::gainToDecibels(linearLevel, kMeterFloorDb);
+    return juce::jlimit(0.0f, 1.0f, (db - kMeterFloorDb) / -kMeterFloorDb);
+}
+
 void drawLevelMeter(juce::Graphics& g, juce::Rectangle<float> bounds, float level, bool vertical)
 {
     g.setColour(colours::background);
     g.fillRoundedRectangle(bounds, 2.0f);
 
-    const auto clamped = juce::jlimit(0.0f, 1.0f, level);
-    if (clamped <= 0.001f)
+    // Scale marks at -12 dB and -3 dB, so the bar has some reference.
+    g.setColour(colours::outline);
+    for (const float markDb : {-12.0f, -3.0f})
+    {
+        const auto position = (markDb - kMeterFloorDb) / -kMeterFloorDb;
+
+        if (vertical)
+        {
+            const auto y = bounds.getBottom() - bounds.getHeight() * position;
+            g.fillRect(bounds.getX(), y, bounds.getWidth(), 1.0f);
+        }
+        else
+        {
+            const auto x = bounds.getX() + bounds.getWidth() * position;
+            g.fillRect(x, bounds.getY(), 1.0f, bounds.getHeight());
+        }
+    }
+
+    const auto position = levelToMeterPosition(level);
+
+    if (position <= 0.001f)
         return;
 
-    // Fixed thresholds rather than a gradient: it reads faster at a glance.
-    const auto colour = clamped > 0.95f ? colours::meterClip
-                        : clamped > 0.7f ? colours::meterHigh
-                                         : colours::meterLow;
+    // Thresholds in dB, where they mean something musical.
+    const auto db = juce::Decibels::gainToDecibels(level, kMeterFloorDb);
+    const auto colour = db > -0.5f ? colours::meterClip : db > -6.0f ? colours::meterHigh : colours::meterLow;
 
     auto filled = bounds;
     if (vertical)
-        filled = bounds.withTop(bounds.getBottom() - bounds.getHeight() * clamped);
+        filled = bounds.withTop(bounds.getBottom() - bounds.getHeight() * position);
     else
-        filled = bounds.withWidth(bounds.getWidth() * clamped);
+        filled = bounds.withWidth(bounds.getWidth() * position);
 
     g.setColour(colour);
     g.fillRoundedRectangle(filled, 2.0f);
