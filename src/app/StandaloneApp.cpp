@@ -96,6 +96,7 @@ public:
             mDeviceManager.removeAudioCallback(&mPlayer);
         }
 
+        mStatusLogger = nullptr;
         mProcessor = nullptr;
         mScannerWorker = nullptr;
     }
@@ -130,6 +131,55 @@ private:
 
         mPlayer.setProcessor(mProcessor.get());
         mDeviceManager.addAudioCallback(&mPlayer);
+
+        logAudioStatus();
+    }
+
+    /// Records what the audio device actually did at startup. Without this the
+    /// only way to tell "device failed to open" from "signal is just quiet" in
+    /// the running app is to guess.
+    void logAudioStatus()
+    {
+        const auto logFile = getStorageDirectory().getChildFile("AudioStatus.log");
+        juce::StringArray lines;
+
+        lines.add("BlockRig audio status  " + juce::Time::getCurrentTime().toString(true, true));
+
+        if (auto* device = mDeviceManager.getCurrentAudioDevice())
+        {
+            const auto activeIn = device->getActiveInputChannels();
+            const auto activeOut = device->getActiveOutputChannels();
+
+            lines.add("device      : " + device->getName());
+            lines.add("open        : " + juce::String(device->isOpen() ? "yes" : "no"));
+            lines.add("playing     : " + juce::String(device->isPlaying() ? "yes" : "no"));
+            lines.add("sample rate : " + juce::String(device->getCurrentSampleRate()));
+            lines.add("buffer      : " + juce::String(device->getCurrentBufferSizeSamples()));
+            lines.add("inputs      : " + juce::String(activeIn.countNumberOfSetBits()) + " active of "
+                      + juce::String(device->getInputChannelNames().size()));
+            lines.add("outputs     : " + juce::String(activeOut.countNumberOfSetBits()) + " active of "
+                      + juce::String(device->getOutputChannelNames().size()));
+
+            juce::StringArray outNames;
+            for (int i = 0; i < device->getOutputChannelNames().size(); ++i)
+                if (activeOut[i])
+                    outNames.add(juce::String(i + 1) + ":" + device->getOutputChannelNames()[i]);
+            lines.add("active out  : " + outNames.joinIntoString(", "));
+        }
+        else
+        {
+            lines.add("device      : NONE — the app opened no audio device");
+        }
+
+        lines.add("processor   : " + juce::String(mProcessor->getTotalNumInputChannels()) + " in / "
+                  + juce::String(mProcessor->getTotalNumOutputChannels()) + " out");
+        lines.add("muted       : " + juce::String(mProcessor->isMuted() ? "yes" : "no"));
+
+        getStorageDirectory().createDirectory();
+        logFile.replaceWithText(lines.joinIntoString("\n") + "\n");
+
+        // Keep sampling levels so the log shows whether audio is flowing.
+        mStatusLogger = std::make_unique<StatusLogger>(*mProcessor, logFile);
     }
 
     /// Scans on a background thread, printing progress, then quits. Same code
@@ -164,6 +214,44 @@ private:
             juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
         });
     }
+
+    /// Appends live level readings to the status log a few times a second, so the
+    /// running app's behaviour can be inspected from outside it.
+    class StatusLogger final : private juce::Timer
+    {
+    public:
+        StatusLogger(BlockRigProcessor& processor, juce::File file)
+            : mProcessor(processor)
+            , mFile(std::move(file))
+        {
+            startTimer(500);
+        }
+
+        ~StatusLogger() override { stopTimer(); }
+
+    private:
+        void timerCallback() override
+        {
+            mPeakIn = juce::jmax(mPeakIn, mProcessor.getInputLevel());
+            mPeakOut = juce::jmax(mPeakOut, mProcessor.getOutputLevel());
+
+            if (++mTicks % 4 != 0)
+                return;
+
+            mFile.appendText("levels: in " + juce::String(mPeakIn, 5) + "  out "
+                             + juce::String(mPeakOut, 5) + "  muted "
+                             + juce::String(mProcessor.isMuted() ? "yes" : "no") + "\n");
+            mPeakIn = 0.0f;
+            mPeakOut = 0.0f;
+        }
+
+        BlockRigProcessor& mProcessor;
+        juce::File mFile;
+        float mPeakIn = 0.0f, mPeakOut = 0.0f;
+        int mTicks = 0;
+    };
+
+    std::unique_ptr<StatusLogger> mStatusLogger;
 
     /// Prints the real audio configuration and measures the input for a few
     /// seconds. Diagnostic, but also the fastest way for a user to answer "is my

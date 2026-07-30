@@ -93,6 +93,12 @@ public:
     void setMuted(bool shouldBeMuted);
     bool isMuted() const { return mMuted.load(std::memory_order_relaxed); }
 
+    /// Plays a 440 Hz tone straight to the output for a couple of seconds,
+    /// ignoring the chain and the mute. Answers "is anything reaching my
+    /// speakers at all" without needing an instrument plugged in.
+    void startTestTone();
+    bool isTestTonePlaying() const { return mTestToneSamplesLeft.load(std::memory_order_relaxed) > 0; }
+
     float getInputLevel() const { return mInputLevel.load(std::memory_order_relaxed); }
     float getOutputLevel() const { return mOutputLevel.load(std::memory_order_relaxed); }
 
@@ -115,6 +121,9 @@ private:
     /// rather than through a plug-in wrapper - so it cannot be used to tell the
     /// two deployments apart.
     std::atomic<bool> mMuted{false};
+
+    std::atomic<int> mTestToneSamplesLeft{0};
+    double mTestTonePhase = 0.0;
 
     std::atomic<float> mInputLevel{0.0f};
     std::atomic<float> mOutputLevel{0.0f};

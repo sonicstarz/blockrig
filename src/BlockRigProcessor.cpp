@@ -103,6 +103,12 @@ void BlockRigProcessor::setMuted(bool shouldBeMuted)
     mMuteGain.setTargetValue(shouldBeMuted ? 0.0f : 1.0f);
 }
 
+void BlockRigProcessor::startTestTone()
+{
+    const auto sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+    mTestToneSamplesLeft.store(static_cast<int>(sampleRate * 2.0), std::memory_order_relaxed);
+}
+
 void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -166,6 +172,26 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
             data[i] *= gain.getNextValue();
     }
     mMuteGain.skip(numSamples);
+
+    // The test tone deliberately sits after the mute: its whole purpose is to
+    // prove the path from this app to the speakers, so nothing may swallow it.
+    if (auto remaining = mTestToneSamplesLeft.load(std::memory_order_relaxed); remaining > 0)
+    {
+        const auto sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+        const auto increment = 2.0 * juce::MathConstants<double>::pi * 440.0 / sampleRate;
+        const int toPlay = juce::jmin(numSamples, remaining);
+
+        for (int i = 0; i < toPlay; ++i)
+        {
+            const auto value = static_cast<float>(0.12 * std::sin(mTestTonePhase));
+            mTestTonePhase += increment;
+
+            for (int channel = 0; channel < juce::jmin(numOutputs, buffer.getNumChannels()); ++channel)
+                buffer.getWritePointer(channel)[i] = value;
+        }
+
+        mTestToneSamplesLeft.store(remaining - toPlay, std::memory_order_relaxed);
+    }
 
     mOutputLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
 }

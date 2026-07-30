@@ -74,6 +74,17 @@ public:
             addAndMakeVisible(mDeviceButton);
         }
 
+        if (kind == EndBlock::Kind::output)
+        {
+            // Proves the route from here to the speakers without needing an
+            // instrument, which separates "no output" from "no input".
+            mTestTone.setButtonText("Test tone");
+            mTestTone.setTooltip("Plays 440 Hz for two seconds, ignoring the chain and the mute. "
+                                 "If you hear nothing, the problem is between this app and your speakers.");
+            mTestTone.onClick = [this] { mProcessor.startTestTone(); };
+            addAndMakeVisible(mTestTone);
+        }
+
         updateDescription();
     }
 
@@ -94,6 +105,12 @@ public:
         auto trimCell = controls.removeFromLeft(90);
         mTrimLabel.setBounds(trimCell.removeFromTop(13));
         mTrim.setBounds(trimCell);
+
+        if (mKind == EndBlock::Kind::output)
+        {
+            controls.removeFromLeft(theme::metrics::gap);
+            mTestTone.setBounds(controls.removeFromLeft(120).withSizeKeepingCentre(120, 30));
+        }
 
         if (mKind == EndBlock::Kind::input)
         {
@@ -229,6 +246,7 @@ private:
     juce::Slider mTrim;
     juce::ComboBox mMode;
     juce::TextButton mDeviceButton;
+    juce::TextButton mTestTone;
 };
 
 /// Runs a plug-in scan on its own thread behind a progress window.
