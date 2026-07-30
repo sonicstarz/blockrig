@@ -125,7 +125,14 @@ private:
     /// Circled X at the top-left, which closes whatever window is open. Present
     /// even when a window covers little of the app, so there is always one
     /// obvious way out.
-    juce::TextButton mCloseOverlayButton{"X"};
+    class CircleCloseButton final : public juce::Button
+    {
+    public:
+        CircleCloseButton() : juce::Button("Close") {}
+        void paintButton(juce::Graphics&, bool highlighted, bool down) override;
+    };
+
+    CircleCloseButton mCloseOverlayButton;
 
     juce::Label mCanvasHint;
 

@@ -636,6 +636,22 @@ void MainView::WindowLayer::paint(juce::Graphics& g)
         g.fillAll(juce::Colours::black.withAlpha(0.55f));
 }
 
+void MainView::CircleCloseButton::paintButton(juce::Graphics& g, bool highlighted, bool down)
+{
+    auto bounds = getLocalBounds().toFloat().reduced(2.0f);
+    const auto emphasis = down ? 1.0f : (highlighted ? 0.85f : 0.6f);
+
+    g.setColour(theme::colours::panel.withAlpha(0.9f));
+    g.fillEllipse(bounds);
+    g.setColour(theme::colours::textDim.withAlpha(emphasis));
+    g.drawEllipse(bounds, 1.4f);
+
+    auto cross = bounds.reduced(bounds.getWidth() * 0.32f);
+    g.setColour(theme::colours::text.withAlpha(emphasis));
+    g.drawLine(cross.getX(), cross.getY(), cross.getRight(), cross.getBottom(), 1.6f);
+    g.drawLine(cross.getX(), cross.getBottom(), cross.getRight(), cross.getY(), 1.6f);
+}
+
 void MainView::WindowLayer::mouseDown(const juce::MouseEvent&)
 {
     // Clicking the dimmed area is the other obvious way to dismiss.
@@ -696,6 +712,22 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
         refreshHeader();
     };
     addAndMakeVisible(mMuteBanner);
+
+    mCanvasHint.setFont(juce::FontOptions(12.5f));
+    mCanvasHint.setColour(juce::Label::textColourId, theme::colours::textFaint);
+    mCanvasHint.setJustificationType(juce::Justification::centred);
+    mCanvasHint.setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(mCanvasHint);
+
+    // Above the lane, so an open window sits over the rig and the dim covers it.
+    addAndMakeVisible(mWindowLayer);
+    mWindowLayer.onBackdropClicked = [this] { closeActiveWindow(); };
+
+    // Above the layer again: the way out must never be behind the dim.
+    mCloseOverlayButton.onClick = [this] { closeActiveWindow(); };
+    mCloseOverlayButton.setTooltip("Close the open block window");
+    mCloseOverlayButton.setVisible(false);
+    addAndMakeVisible(mCloseOverlayButton);
 
 
 
