@@ -35,6 +35,7 @@ public:
     void setLoad(float fractionOfBudget);
     /// "A" or "B" on a split stage; empty when the stage has a single path.
     void setRowLabel(juce::String label);
+    void setAccentColour(juce::Colour colour);
 
     bool isBypassed() const { return mBypassed; }
 
@@ -56,6 +57,7 @@ private:
     bool mDragging = false;
     juce::Rectangle<int> mHomeBounds;
     juce::String mRowLabel;
+    juce::Colour mAccent{0xff8b93a1};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BlockTile)
 };
@@ -99,7 +101,18 @@ class LaneContent final : public juce::Component
 public:
     void paint(juce::Graphics&) override;
 
-    void setConnectors(std::vector<juce::Rectangle<int>> connectors)
+    /// A run of signal path. Straight segments are simple lines; a branch is
+    /// drawn as a rounded elbow leaving the main line and returning to it, which
+    /// is what makes a parallel path read as parallel rather than as a detour.
+    struct Connector
+    {
+        juce::Point<int> from;
+        juce::Point<int> to;
+        bool branch = false;   ///< route via an elbow rather than straight across
+        bool junction = false; ///< draw a dot at the start, where paths meet
+    };
+
+    void setConnectors(std::vector<Connector> connectors)
     {
         mConnectors = std::move(connectors);
         repaint();
@@ -116,7 +129,7 @@ public:
     }
 
 private:
-    std::vector<juce::Rectangle<int>> mConnectors;
+    std::vector<Connector> mConnectors;
     int mDropIndicatorX = -1;
     int mDropRow = 0;
     int mDropTotalRows = 1;

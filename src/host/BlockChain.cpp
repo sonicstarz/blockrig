@@ -212,12 +212,13 @@ bool BlockChain::splitStage(int stageIndex)
     if (static_cast<int>(stage.rows.size()) >= kMaxRowsPerStage)
         return false;
 
-    // Two amps almost always want opposite sides, so default to hard L/R rather
-    // than stacking both in the centre.
-    stage.rows.front().pan = -1.0f;
+    // Both paths stay centred, so the split rejoins in true stereo and each path
+    // keeps whatever image its plug-ins produce. Hard-panning the sides would
+    // collapse every stereo plug-in in the rig to one speaker.
+    stage.rows.front().pan = 0.0f;
 
     LaneRow rowB;
-    rowB.pan = 1.0f;
+    rowB.pan = 0.0f;
     stage.rows.push_back(std::move(rowB));
 
     publishSnapshot();
@@ -552,10 +553,25 @@ void BlockChain::processStage(RenderStage& stage, juce::AudioBuffer<float>& buff
         const float leftGain = row.gainLinear * row.panLeft;
         const float rightGain = row.gainLinear * row.panRight;
 
-        if (numChannels >= 1)
-            mAccumulator.addFrom(0, 0, work, 0, 0, numSamples, leftGain);
-        if (numChannels >= 2)
-            mAccumulator.addFrom(1, 0, work, juce::jmin(1, work.getNumChannels() - 1), 0, numSamples, rightGain);
+        // Centre means "leave the stereo image alone": each side of the row goes
+        // to its own side of the sum. Only an actual pan setting steers it.
+        if (std::abs(row.panLeft - row.panRight) < 1.0e-4f)
+        {
+            const float gain = row.gainLinear * row.panLeft;
+
+            for (int channel = 0; channel < numChannels; ++channel)
+                mAccumulator.addFrom(channel, 0, work, juce::jmin(channel, work.getNumChannels() - 1), 0,
+                                     numSamples, gain);
+        }
+        else
+        {
+            // Panned: collapse the row and steer it, which is what a pan means.
+            if (numChannels >= 1)
+                mAccumulator.addFrom(0, 0, work, 0, 0, numSamples, leftGain);
+            if (numChannels >= 2)
+                mAccumulator.addFrom(1, 0, work, juce::jmin(1, work.getNumChannels() - 1), 0, numSamples,
+                                     rightGain);
+        }
     }
 
     for (int channel = 0; channel < numChannels; ++channel)

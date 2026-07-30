@@ -9,15 +9,17 @@ namespace
 void styleKnob(juce::Slider& slider)
 {
     slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 16);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 64, 15);
 }
 
 void styleCaption(juce::Label& label, const juce::String& text)
 {
     label.setText(text.toUpperCase(), juce::dontSendNotification);
-    label.setJustificationType(juce::Justification::centred);
-    label.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-    label.setColour(juce::Label::textColourId, theme::colours::textDim);
+    // Left-aligned in its cell, as in a parameter grid rather than centred under
+    // a floating knob.
+    label.setJustificationType(juce::Justification::centredLeft);
+    label.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+    label.setColour(juce::Label::textColourId, theme::colours::textFaint);
 }
 } // namespace
 
@@ -205,6 +207,20 @@ void NamBlockPanel::paint(juce::Graphics& g)
     g.setColour(mDragHighlight ? theme::colours::accent : theme::colours::outline);
     g.drawRoundedRectangle(bounds, theme::metrics::cornerRadius, mDragHighlight ? 2.0f : 1.0f);
 
+    // Cell dividers behind the knob row, so parameters read as a grid rather
+    // than as controls floating in a panel.
+    if (!mKnobCells.isEmpty())
+    {
+        g.setColour(theme::colours::outline.withAlpha(0.6f));
+
+        for (int i = 1; i < mKnobCells.size(); ++i)
+        {
+            const auto cell = mKnobCells[i];
+            g.fillRect(static_cast<float>(cell.getX()) - 0.5f, static_cast<float>(cell.getY()) + 4.0f, 1.0f,
+                       static_cast<float>(cell.getHeight()) - 8.0f);
+        }
+    }
+
     // In/out meters down the right edge, so the amp's own levels are visible
     // without hunting.
     auto meters = bounds.reduced(theme::metrics::padding).removeFromRight(10.0f);
@@ -231,9 +247,12 @@ void NamBlockPanel::resized()
 
     // Knob row: the controls people actually reach for.
     auto knobs = area.removeFromTop(84);
-    const auto layoutKnob = [&knobs](juce::Slider& slider, juce::Label& label, int width) {
+    mKnobCells.clearQuick();
+
+    const auto layoutKnob = [this, &knobs](juce::Slider& slider, juce::Label& label, int width) {
         auto cell = knobs.removeFromLeft(width);
-        label.setBounds(cell.removeFromTop(13));
+        mKnobCells.add(cell);
+        label.setBounds(cell.removeFromTop(15));
         slider.setBounds(cell);
     };
 

@@ -80,66 +80,75 @@ void BlockTile::setRowLabel(juce::String label)
     repaint();
 }
 
+void BlockTile::setAccentColour(juce::Colour colour)
+{
+    if (mAccent == colour)
+        return;
+    mAccent = colour;
+    repaint();
+}
+
 void BlockTile::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+    auto bounds = getLocalBounds();
+    auto square = bounds.removeFromTop(theme::metrics::blockSquare).toFloat().reduced(2.0f);
+    auto labelArea = bounds;
 
-    g.setColour(mBypassed ? theme::colours::panel : theme::colours::panelRaised);
-    g.fillRoundedRectangle(bounds, theme::metrics::cornerRadius);
+    const auto tint = mBypassed ? mAccent.withSaturation(0.12f).withAlpha(0.5f) : mAccent;
 
-    g.setColour(mSelected ? theme::colours::accent : theme::colours::outline);
-    g.drawRoundedRectangle(bounds, theme::metrics::cornerRadius, mSelected ? 1.8f : 1.0f);
+    // The block itself: a dark square carrying a coloured edge. Selection
+    // thickens and brightens that edge rather than adding another shape.
+    g.setColour(theme::colours::panelRaised);
+    g.fillRoundedRectangle(square, theme::metrics::cornerRadius);
 
-    auto content = bounds.reduced(9.0f, 8.0f);
+    g.setColour(mSelected ? theme::colours::accent : tint.withAlpha(mBypassed ? 0.45f : 0.85f));
+    g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 2.4f : 1.6f);
 
-    // Bypass LED, top-left: click target and status in one.
-    const juce::Rectangle<float> led{content.getX(), content.getY() + 1.0f, 8.0f, 8.0f};
-    g.setColour(mBypassed ? theme::colours::textFaint : theme::colours::good);
-    g.fillEllipse(led);
+    // A short glyph stands in for an icon: the first letters read at a glance
+    // and never collide the way a truncated title does.
+    auto glyph = mName.retainCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+    glyph = glyph.substring(0, 2).toUpperCase();
+
+    g.setColour(mBypassed ? theme::colours::textFaint : tint);
+    g.setFont(juce::FontOptions(19.0f, juce::Font::bold));
+    g.drawText(glyph, square.reduced(4.0f).withTrimmedBottom(9.0f), juce::Justification::centred, false);
+
+    // Level along the bottom edge of the square.
+    theme::drawLevelMeter(g, square.reduced(9.0f, 0.0f).removeFromBottom(4.0f).translated(0.0f, -5.0f),
+                          mBypassed ? 0.0f : mActivity);
+
+    // Side marker for a split path, and a dot when an editor window is open.
+    if (mRowLabel.isNotEmpty())
+    {
+        g.setColour(theme::colours::accent);
+        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+        g.drawText(mRowLabel, square.reduced(5.0f).removeFromTop(12.0f), juce::Justification::topLeft, false);
+    }
 
     if (mEditorOpen)
     {
-        // Small marker so it is obvious which blocks have windows open.
         g.setColour(theme::colours::accent);
-        g.fillEllipse(content.getRight() - 8.0f, content.getY() + 1.0f, 8.0f, 8.0f);
+        g.fillEllipse(square.getRight() - 12.0f, square.getY() + 5.0f, 6.0f, 6.0f);
     }
 
-    // Which side of a split this block is on.
-    if (mRowLabel.isNotEmpty())
+    if (mBypassed)
     {
-        g.setColour(theme::colours::accent.withAlpha(0.9f));
-        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-        g.drawText(mRowLabel, juce::Rectangle<float>(content.getX() + 13.0f, content.getY(), 16.0f, 11.0f),
-                   juce::Justification::centredLeft, false);
+        // Struck through: unmistakable at a glance, unlike a dimmed tile.
+        g.setColour(theme::colours::textFaint.withAlpha(0.8f));
+        g.drawLine(square.getX() + 8.0f, square.getCentreY(), square.getRight() - 8.0f, square.getCentreY(),
+                   1.5f);
     }
 
-    content.removeFromTop(14.0f);
-
-    g.setColour(mBypassed ? theme::colours::textFaint : theme::colours::text);
-    g.setFont(juce::FontOptions(12.5f, juce::Font::bold));
-    g.drawFittedText(mName, content.removeFromTop(30.0f).toNearestInt(), juce::Justification::topLeft, 2, 0.85f);
-
-    g.setColour(theme::colours::textFaint);
-    g.setFont(juce::FontOptions(10.0f));
-    g.drawText(mSubtitle, content.removeFromTop(13.0f), juce::Justification::topLeft, true);
-
-    // Output level of this block. Deliberately audio, not CPU: a bar on a block
-    // reads as signal, and showing load here was actively misleading.
-    theme::drawLevelMeter(g, content.removeFromBottom(5.0f), mBypassed ? 0.0f : mActivity);
+    g.setColour(mSelected ? theme::colours::text
+                          : (mBypassed ? theme::colours::textFaint : theme::colours::textDim));
+    g.setFont(juce::FontOptions(10.5f));
+    g.drawFittedText(mName, labelArea.reduced(1, 1), juce::Justification::centredTop, 2, 0.8f);
 }
 
 void BlockTile::mouseDown(const juce::MouseEvent& event)
 {
     if (onSelect)
         onSelect();
-
-    // The LED area toggles bypass without selecting anything else.
-    if (event.x < 22 && event.y < 24)
-    {
-        if (onToggleBypass)
-            onToggleBypass();
-        return;
-    }
 
     if (event.mods.isPopupMenu())
         if (onShowMenu)
@@ -231,26 +240,25 @@ void EndBlock::setSelected(bool shouldBeSelected)
 
 void EndBlock::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+    auto bounds = getLocalBounds();
+    auto square = bounds.removeFromTop(theme::metrics::blockSquare).toFloat().reduced(2.0f);
 
     g.setColour(theme::colours::panel);
-    g.fillRoundedRectangle(bounds, theme::metrics::cornerRadius);
-    g.setColour(mSelected ? theme::colours::accent : theme::colours::outline);
-    g.drawRoundedRectangle(bounds, theme::metrics::cornerRadius, mSelected ? 1.8f : 1.0f);
+    g.fillRoundedRectangle(square, theme::metrics::cornerRadius);
+    g.setColour(mSelected ? theme::colours::accent : theme::colours::outlineStrong);
+    g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 2.4f : 1.4f);
 
-    auto content = bounds.reduced(9.0f, 8.0f);
-
-    g.setColour(theme::colours::textDim);
-    g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
-    g.drawText(mKind == Kind::input ? "INPUT" : "OUTPUT", content.removeFromTop(13.0f),
-               juce::Justification::topLeft, false);
-
-    content.removeFromTop(4.0f);
     g.setColour(theme::colours::text);
-    g.setFont(juce::FontOptions(11.5f));
-    g.drawFittedText(mCaption, content.removeFromTop(28.0f).toNearestInt(), juce::Justification::topLeft, 2, 0.9f);
+    g.setFont(juce::FontOptions(12.0f, juce::Font::bold));
+    g.drawText(mKind == Kind::input ? "IN" : "OUT", square.withTrimmedBottom(12.0f),
+               juce::Justification::centred, false);
 
-    theme::drawLevelMeter(g, content.removeFromBottom(5.0f), mLevel);
+    theme::drawLevelMeter(g, square.reduced(9.0f, 0.0f).removeFromBottom(4.0f).translated(0.0f, -5.0f),
+                          mLevel);
+
+    g.setColour(theme::colours::textFaint);
+    g.setFont(juce::FontOptions(9.5f));
+    g.drawFittedText(mCaption, bounds.reduced(1, 1), juce::Justification::centredTop, 2, 0.8f);
 }
 
 void EndBlock::mouseDown(const juce::MouseEvent&)
@@ -351,6 +359,15 @@ void LaneView::refresh()
                 tile->setEditorOpen(mEditorWindows.isOpen(uid));
                 tile->setSelected(uid == mSelectedUid);
                 tile->setRowLabel(rows > 1 ? (rowIndex == 0 ? "A" : "B") : juce::String());
+
+                juce::String category;
+                if (plugin != nullptr)
+                {
+                    juce::PluginDescription description;
+                    plugin->fillInPluginDescription(description);
+                    category = description.category;
+                }
+                tile->setAccentColour(theme::colourForCategory(category, block->getDisplayName()));
 
                 tile->onSelect = [this, uid] { selectBlock(uid); };
 
@@ -679,28 +696,45 @@ void LaneView::paint(juce::Graphics& g)
 
 void LaneContent::paint(juce::Graphics& g)
 {
-    // Connectors between the blocks, so the lane reads as a signal path rather
-    // than a row of unrelated boxes.
-    g.setColour(theme::colours::outlineStrong);
-
-    for (const auto& segment : mConnectors)
+    for (const auto& connector : mConnectors)
     {
-        const auto y = static_cast<float>(segment.getCentreY());
-        g.fillRect(juce::Rectangle<float>(static_cast<float>(segment.getX()), y - 0.75f,
-                                          static_cast<float>(segment.getWidth()), 1.5f));
+        const auto from = connector.from.toFloat();
+        const auto to = connector.to.toFloat();
 
-        // Arrow head.
-        juce::Path head;
-        const auto tip = static_cast<float>(segment.getRight());
-        head.startNewSubPath(tip - 5.0f, y - 3.5f);
-        head.lineTo(tip, y);
-        head.lineTo(tip - 5.0f, y + 3.5f);
-        g.strokePath(head, juce::PathStrokeType(1.5f, juce::PathStrokeType::curved,
+        juce::Path path;
+        path.startNewSubPath(from);
+
+        if (connector.branch && std::abs(to.y - from.y) > 2.0f)
+        {
+            // Elbow out, run along the row, elbow back — the shape that reads as
+            // "this path leaves the chain and returns to it".
+            const auto corner = juce::jmin(9.0f, std::abs(to.y - from.y) * 0.5f);
+            const auto midX = from.x + juce::jmax(10.0f, (to.x - from.x) * 0.45f);
+            const auto direction = to.y > from.y ? 1.0f : -1.0f;
+
+            path.lineTo(midX - corner, from.y);
+            path.quadraticTo(midX, from.y, midX, from.y + corner * direction);
+            path.lineTo(midX, to.y - corner * direction);
+            path.quadraticTo(midX, to.y, midX + corner, to.y);
+            path.lineTo(to);
+        }
+        else
+        {
+            path.lineTo(to);
+        }
+
+        g.setColour(theme::colours::outlineStrong);
+        g.strokePath(path, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved,
                                                 juce::PathStrokeType::rounded));
+
+        // Dots where a path divides or rejoins, as in a signal diagram.
+        if (connector.junction)
+        {
+            g.setColour(theme::colours::textDim);
+            g.fillEllipse(from.x - 2.5f, from.y - 2.5f, 5.0f, 5.0f);
+        }
     }
 
-    // Where a dragged tile would land: only as tall as the row it would join, so
-    // on a split it is clear which side is being targeted.
     if (mDropIndicatorX >= 0)
     {
         const auto bandHeight = static_cast<float>(getHeight()) / static_cast<float>(mDropTotalRows);
@@ -795,31 +829,46 @@ void LaneView::resized()
     mLaneContent.setSize(juce::jmax(x + theme::metrics::gap, getWidth()),
                          juce::jmax(getHeight(), laneHeight + 2 * theme::metrics::gap));
 
-    // Connectors: one run into each stage and out of it. A split fans out to both
-    // rows and back in, which is what makes the parallelism legible.
-    std::vector<juce::Rectangle<int>> connectors;
+    // Routing. A single-row stage is a straight run; a split leaves the main line
+    // at a junction, runs its rows, and rejoins at another junction so the signal
+    // returns to one path in full stereo.
+    std::vector<LaneContent::Connector> connectors;
+
+    const int mainY = laneTop + laneHeight / 2;
+    const int squareCentre = theme::metrics::blockSquare / 2;
     int previousRight = mInputBlock.getRight();
-    int previousCentreY = mInputBlock.getBounds().getCentreY();
 
     for (int stageIndex = 0; stageIndex < static_cast<int>(mStageGeometry.size()); ++stageIndex)
     {
         const auto& geometry = mStageGeometry[static_cast<size_t>(stageIndex)];
         const int stageTop = laneTop + (laneHeight - geometry.rows * singleRow) / 2;
+        const bool split = geometry.rows > 1;
 
         for (int rowIndex = 0; rowIndex < geometry.rows; ++rowIndex)
         {
-            const int rowCentreY = stageTop + rowIndex * singleRow + singleRow / 2;
-            connectors.push_back({previousRight, juce::jmin(previousCentreY, rowCentreY),
-                                  geometry.x - previousRight,
-                                  std::abs(rowCentreY - previousCentreY) + 2});
+            const int rowY = stageTop + rowIndex * singleRow + squareCentre;
+            connectors.push_back({{previousRight, mainY}, {geometry.x, rowY}, split, split && rowIndex == 0});
         }
 
         previousRight = geometry.x + geometry.width;
-        previousCentreY = laneTop + laneHeight / 2;
+
+        if (split)
+        {
+            const int rejoinX = previousRight + theme::metrics::arrowWidth / 2;
+
+            for (int rowIndex = 0; rowIndex < geometry.rows; ++rowIndex)
+            {
+                const int rowY = stageTop + rowIndex * singleRow + squareCentre;
+                connectors.push_back({{previousRight, rowY}, {rejoinX, mainY}, true, false});
+            }
+
+            // The dot where the two paths become one again.
+            connectors.push_back({{rejoinX, mainY}, {rejoinX, mainY}, false, true});
+            previousRight = rejoinX;
+        }
     }
 
-    connectors.push_back({previousRight, previousCentreY - 1,
-                          juce::jmax(0, mOutputBlock.getX() - previousRight), 2});
+    connectors.push_back({{previousRight, mainY}, {mOutputBlock.getX(), mainY}, false, false});
 
     mLaneContent.setConnectors(std::move(connectors));
 }

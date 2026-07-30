@@ -44,12 +44,22 @@ inline constexpr int gap = 10;
 inline constexpr int padding = 14;
 
 inline constexpr int headerHeight = 52;
-inline constexpr int laneHeight = 132;
-inline constexpr int blockWidth = 116;
-inline constexpr int blockHeight = 92;
-inline constexpr int endBlockWidth = 96;
-inline constexpr int arrowWidth = 18;
+
+/// Blocks are compact squares with the name beneath, rather than wide cards.
+/// A rig is read by shape and colour at a glance; long titles inside every tile
+/// turn the chain into a wall of text.
+inline constexpr int blockSquare = 58;
+inline constexpr int blockLabelHeight = 26;
+inline constexpr int blockWidth = blockSquare;
+inline constexpr int blockHeight = blockSquare + blockLabelHeight;
+inline constexpr int endBlockWidth = 52;
+inline constexpr int arrowWidth = 26;
+inline constexpr int laneHeight = blockHeight + 2 * gap;
 } // namespace metrics
+
+/// Colour for a block, keyed off the plug-in's category so a rig reads by hue:
+/// amps warm, time-based cool, dynamics blue, and so on.
+juce::Colour colourForCategory(const juce::String& category, const juce::String& name);
 
 /// Shared LookAndFeel. Kept small on purpose: components draw themselves from
 /// the palette above, and this only covers the stock widgets we reuse.

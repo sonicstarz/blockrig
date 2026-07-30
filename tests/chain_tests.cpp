@@ -388,10 +388,41 @@ void testParallelSplit()
     check(chain.isStageSplit(0), "stage reports itself split");
     check(chain.getNumRows(0) == 2, "the split has two rows");
 
-    // Splitting defaults the sides to opposite ends of the image, which is what
-    // two amps almost always want.
-    check(std::abs(chain.getRowPan(0, 0) + 1.0f) < 0.01f, "side A defaults hard left");
-    check(std::abs(chain.getRowPan(0, 1) - 1.0f) < 0.01f, "side B defaults hard right");
+    // Both sides default to centre so the split rejoins in true stereo. Hard
+    // panning them would collapse every stereo plug-in in the rig to one speaker.
+    check(std::abs(chain.getRowPan(0, 0)) < 0.01f, "side A defaults centred");
+    check(std::abs(chain.getRowPan(0, 1)) < 0.01f, "side B defaults centred");
+
+    // The real requirement: a stereo signal must still be stereo after rejoining.
+    {
+        blockrig::BlockChain stereoCheck;
+        stereoCheck.prepare(kSampleRate, kBlockSize);
+        stereoCheck.insertBlock(makeBlock(*delay), blockrig::BlockPosition{0, 0, 0});
+        stereoCheck.splitStage(0);
+
+        juce::AudioBuffer<float> buffer(2, kBlockSize);
+        juce::MidiBuffer midi;
+
+        // Distinct content per side: left tone, right silence.
+        for (int block = 0; block < 8; ++block)
+        {
+            buffer.clear();
+            auto* left = buffer.getWritePointer(0);
+            for (int i = 0; i < kBlockSize; ++i)
+                left[i] = 0.5f * std::sin(0.05f * static_cast<float>(i));
+
+            midi.clear();
+            stereoCheck.process(buffer, midi);
+        }
+
+        const auto leftLevel = buffer.getMagnitude(0, 0, kBlockSize);
+        const auto rightLevel = buffer.getMagnitude(1, 0, kBlockSize);
+        std::printf("       after rejoin: left %.4f, right %.4f\n", leftLevel, rightLevel);
+
+        check(leftLevel > 0.05f, "left content survives the split and rejoin");
+        check(rightLevel < leftLevel * 0.5f,
+              "right stays distinct from left — the rejoin is stereo, not collapsed");
+    }
 
     float magnitude = 0.0f;
     check(render(chain, 8, &magnitude), "renders with one side empty");

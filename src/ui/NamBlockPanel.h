@@ -61,6 +61,8 @@ private:
     std::unique_ptr<ComboAttachment> mOutputModeAtt;
 
     std::unique_ptr<juce::FileChooser> mFileChooser;
+    /// Laid out in resized(), drawn in paint() as the grid's dividers.
+    juce::Array<juce::Rectangle<int>> mKnobCells;
     bool mDragHighlight = false;
     float mInputLevel = 0.0f, mOutputLevel = 0.0f;
 

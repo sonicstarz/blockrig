@@ -248,18 +248,14 @@ void BlockPicker::paintListBoxItem(int row, juce::Graphics& g, int width, int he
     g.drawText(entry.description.manufacturerName, text, juce::Justification::centredLeft, true);
 }
 
-void BlockPicker::listBoxItemClicked(int row, const juce::MouseEvent& event)
+void BlockPicker::listBoxItemClicked(int row, const juce::MouseEvent&)
 {
-    // Single click on a header should not select it.
+    // Selection only. Handling double clicks here as well as in
+    // listBoxItemDoubleClicked meant both fired for one double click, and the
+    // plug-in was added twice.
     if (juce::isPositiveAndBelow(row, static_cast<int>(mEntries.size()))
         && mEntries[static_cast<size_t>(row)].isHeader)
-    {
         mList.deselectAllRows();
-        return;
-    }
-
-    if (event.getNumberOfClicks() >= 2)
-        chooseRow(row);
 }
 
 void BlockPicker::listBoxItemDoubleClicked(int row, const juce::MouseEvent&)

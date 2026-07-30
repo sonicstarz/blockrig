@@ -161,6 +161,37 @@ juce::Font Look::getPopupMenuFont()
     return juce::Font(juce::FontOptions(13.5f));
 }
 
+juce::Colour colourForCategory(const juce::String& category, const juce::String& name)
+{
+    const auto haystack = (category + " " + name).toLowerCase();
+
+    const auto has = [&haystack](std::initializer_list<const char*> words) {
+        for (const auto* word : words)
+            if (haystack.contains(word))
+                return true;
+        return false;
+    };
+
+    if (has({"amp", "nam", "cab", "speaker", "preamp"}))
+        return juce::Colour(0xffe8a33d); // amber
+    if (has({"reverb", "verb", "room", "hall", "space"}))
+        return juce::Colour(0xff4fd1c5); // teal
+    if (has({"delay", "echo", "tape"}))
+        return juce::Colour(0xff5aa9f0); // blue
+    if (has({"eq", "filter", "tone"}))
+        return juce::Colour(0xff9d7ff0); // violet
+    if (has({"comp", "dynamic", "limit", "gate", "expand"}))
+        return juce::Colour(0xff4f8ef0); // deeper blue
+    if (has({"dist", "drive", "fuzz", "od", "sat", "clip"}))
+        return juce::Colour(0xffe0574f); // red
+    if (has({"chorus", "flange", "phase", "mod", "trem", "vibr"}))
+        return juce::Colour(0xff5cc85c); // green
+    if (has({"pitch", "harm", "octave"}))
+        return juce::Colour(0xffe07fc0); // pink
+
+    return juce::Colour(0xff8b93a1); // neutral
+}
+
 float levelToMeterPosition(float linearLevel)
 {
     if (linearLevel <= 0.0f)
