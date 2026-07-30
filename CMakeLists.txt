@@ -169,6 +169,12 @@ juce_add_gui_app(BlockRigApp
     PRODUCT_NAME "BlockRig"
     COMPANY_NAME "BlockRig"
     BUNDLE_ID "com.blockrig.app"
+    # Without this, macOS hands the app silence instead of input and never even
+    # prompts: the device opens, callbacks run, and every sample is zero. It is
+    # invisible from inside the process, and it does not affect a binary run from
+    # a terminal, which inherits that terminal's permission.
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "BlockRig needs audio input to process your guitar."
     ICON_BIG "")
 
 target_sources(BlockRigApp PRIVATE

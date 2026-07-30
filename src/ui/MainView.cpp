@@ -377,6 +377,33 @@ private:
 } // namespace
 
 //==============================================================================
+void MainView::MuteBanner::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+    const bool hovered = isMouseOver();
+
+    g.setColour(theme::colours::bad.withAlpha(hovered ? 0.28f : 0.20f));
+    g.fillRoundedRectangle(bounds, theme::metrics::cornerRadius);
+    g.setColour(theme::colours::bad.withAlpha(hovered ? 1.0f : 0.8f));
+    g.drawRoundedRectangle(bounds, theme::metrics::cornerRadius, 2.0f);
+
+    g.setColour(theme::colours::text);
+    g.setFont(juce::FontOptions(17.0f, juce::Font::bold));
+    g.drawText("OUTPUT IS MUTED", bounds.removeFromTop(bounds.getHeight() * 0.55f),
+               juce::Justification::centredBottom, false);
+
+    g.setColour(theme::colours::textDim);
+    g.setFont(juce::FontOptions(13.0f));
+    g.drawText("Click here to start hearing audio", bounds, juce::Justification::centredTop, false);
+}
+
+void MainView::MuteBanner::mouseDown(const juce::MouseEvent&)
+{
+    if (onClick)
+        onClick();
+}
+
+//==============================================================================
 void MainView::PanelHolder::setPanel(std::unique_ptr<juce::Component> panel)
 {
     if (mPanel != nullptr)
@@ -434,6 +461,12 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     addAndMakeVisible(mSettingsButton);
 
     addAndMakeVisible(mLane);
+
+    mMuteBanner.onClick = [this] {
+        mProcessor.setMuted(false);
+        refreshHeader();
+    };
+    addAndMakeVisible(mMuteBanner);
 
     buildTabs();
 
@@ -657,6 +690,10 @@ void MainView::refreshHeader()
     mMuteButton.setColour(juce::TextButton::buttonColourId,
                           muted ? theme::colours::bad.withAlpha(0.9f) : theme::colours::good.withAlpha(0.7f));
 
+    mMuteBanner.setVisible(muted);
+    if (muted)
+        mMuteBanner.toFront(false);
+
     const int count = mProcessor.getCatalog().getKnownPluginList().getNumTypes();
 
     if (count == 0)
@@ -776,6 +813,9 @@ void MainView::resized()
     juce::Component* items[] = {&mLane, mResizer.get(), &mTabs};
     mLayout.layOutComponents(items, 3, area.getX(), area.getY(), area.getWidth(), area.getHeight(), true,
                              true);
+
+    mMuteBanner.setBounds(mLane.getBounds().withSizeKeepingCentre(
+        juce::jmin(430, mLane.getWidth() - 20), juce::jmin(78, mLane.getHeight() - 8)));
 
 }
 

@@ -99,6 +99,11 @@ public:
     void startTestTone();
     bool isTestTonePlaying() const { return mTestToneSamplesLeft.load(std::memory_order_relaxed) > 0; }
 
+    /// How many times processBlock has run. Distinguishes "the audio callback
+    /// never reaches us" from "the signal really is silent", which no level
+    /// reading can tell you on its own.
+    juce::int64 getProcessBlockCount() const { return mProcessBlockCount.load(std::memory_order_relaxed); }
+
     float getInputLevel() const { return mInputLevel.load(std::memory_order_relaxed); }
     float getOutputLevel() const { return mOutputLevel.load(std::memory_order_relaxed); }
 
@@ -122,6 +127,7 @@ private:
     /// two deployments apart.
     std::atomic<bool> mMuted{false};
 
+    std::atomic<juce::int64> mProcessBlockCount{0};
     std::atomic<int> mTestToneSamplesLeft{0};
     double mTestTonePhase = 0.0;
 

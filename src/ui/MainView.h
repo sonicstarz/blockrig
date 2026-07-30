@@ -63,6 +63,22 @@ private:
 
     LaneView mLane;
 
+    /// Big, unmissable, clickable banner shown while the output is muted.
+    /// A small button in the header was not enough: muted output is silence with
+    /// no other symptom, and people reasonably conclude the app is broken.
+    class MuteBanner final : public juce::Component
+    {
+    public:
+        void paint(juce::Graphics&) override;
+        void mouseDown(const juce::MouseEvent&) override;
+        void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+        void mouseExit(const juce::MouseEvent&) override { repaint(); }
+
+        std::function<void()> onClick;
+    };
+
+    MuteBanner mMuteBanner;
+
     /// Hosts one child and sizes it to fill, so a tab's contents can be swapped
     /// without adding and removing tabs.
     class PanelHolder final : public juce::Component

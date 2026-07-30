@@ -44,6 +44,13 @@ BlockRigProcessor::BlockRigProcessor()
 {
     mCatalog.loadFromStorage();
     mLatencyPoller = std::make_unique<LatencyPoller>(*this);
+
+    // SmoothedValue starts at 0, so if a processBlock ever arrives before
+    // prepareToPlay every gain multiplies the signal by zero and the app is
+    // silent with no other symptom. Give them real values up front.
+    mInputGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(mInputGainDb));
+    mOutputGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(mOutputGainDb));
+    mMuteGain.setCurrentAndTargetValue(isMuted() ? 0.0f : 1.0f);
 }
 
 BlockRigProcessor::~BlockRigProcessor()
@@ -116,6 +123,8 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     const int numSamples = buffer.getNumSamples();
     const int numInputs = getTotalNumInputChannels();
     const int numOutputs = getTotalNumOutputChannels();
+
+    mProcessBlockCount.fetch_add(1, std::memory_order_relaxed);
 
     if (numSamples <= 0)
         return;

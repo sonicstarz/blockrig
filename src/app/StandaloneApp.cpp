@@ -238,9 +238,14 @@ private:
             if (++mTicks % 4 != 0)
                 return;
 
+            const auto blocks = mProcessor.getProcessBlockCount();
+
             mFile.appendText("levels: in " + juce::String(mPeakIn, 5) + "  out "
                              + juce::String(mPeakOut, 5) + "  muted "
-                             + juce::String(mProcessor.isMuted() ? "yes" : "no") + "\n");
+                             + juce::String(mProcessor.isMuted() ? "yes" : "no") + "  processBlocks "
+                             + juce::String(blocks) + " (+" + juce::String(blocks - mLastBlockCount) + ")\n");
+
+            mLastBlockCount = blocks;
             mPeakIn = 0.0f;
             mPeakOut = 0.0f;
         }
@@ -249,6 +254,7 @@ private:
         juce::File mFile;
         float mPeakIn = 0.0f, mPeakOut = 0.0f;
         int mTicks = 0;
+        juce::int64 mLastBlockCount = 0;
     };
 
     std::unique_ptr<StatusLogger> mStatusLogger;
