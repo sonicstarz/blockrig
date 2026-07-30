@@ -74,6 +74,7 @@ NamBlockProcessor::NamBlockProcessor()
     , mApvts(*this, nullptr, "PARAMETERS", createLayout())
 {
     mLoader.attachSlot(0, &mSlot);
+    mLoader.attachSlot(1, &mSlotRight);
 
     mLoader.onLoadFinished = [this](int, nammodeler::ModelInfo info, juce::String error) {
         mModelInfo = std::move(info);
@@ -126,6 +127,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout NamBlockProcessor::createLay
         juce::AudioParameterFloatAttributes{}.withStringFromValueFunction(
             [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; })));
 
+    // On by default: an amp block that folds the rig to mono is a surprise, and
+    // the second instance costs about what the first does (A2 is ~3.4% of a core).
+    layout.add(std::make_unique<juce::AudioParameterBool>(makeId("stereo"), "True Stereo", true));
+
     return layout;
 }
 
@@ -138,14 +143,17 @@ void NamBlockProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     mLoader.setAudioConfiguration(sampleRate, samplesPerBlock);
     mSlot.prepare(sampleRate, samplesPerBlock);
+    mSlotRight.prepare(sampleRate, samplesPerBlock);
     mGate.prepare(sampleRate, samplesPerBlock);
     mMono.setSize(1, samplesPerBlock, false, true, true);
+    mRightScratch.setSize(1, samplesPerBlock, false, true, true);
     updateLatency();
 }
 
 void NamBlockProcessor::releaseResources()
 {
     mSlot.reset();
+    mSlotRight.reset();
     mGate.reset();
 }
 
@@ -222,8 +230,47 @@ void NamBlockProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     if (gateEnabled)
         mGate.trigger(mono, numSamples, rawValue(mApvts, "gate_thresh"));
 
-    const bool produced = mSlot.process(mono, numSamples, readParameters());
+    const auto params = readParameters();
+    const bool stereo = boolValue(mApvts, "stereo") && numInputs >= 2 && numOutputs >= 2;
 
+    if (stereo)
+    {
+        // Two instances of the same capture, one per channel, so a stereo image
+        // arriving here survives the amp instead of being folded to mono.
+        float* right = mRightScratch.getWritePointer(0);
+        juce::FloatVectorOperations::copy(mono, buffer.getReadPointer(0), numSamples);
+        juce::FloatVectorOperations::copy(right, buffer.getReadPointer(1), numSamples);
+
+        const bool leftProduced = mSlot.process(mono, numSamples, params);
+        const bool rightProduced = mSlotRight.process(right, numSamples, params);
+
+        if (!leftProduced && !rightProduced)
+        {
+            mOutputLevel.store(0.0f, std::memory_order_relaxed);
+            return;
+        }
+
+        if (gateEnabled)
+        {
+            mGate.applyGain(mono, numSamples);
+            mGate.applyGain(right, numSamples);
+        }
+
+        float peak = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+            peak = juce::jmax(peak, std::abs(mono[i]), std::abs(right[i]));
+        mOutputLevel.store(peak, std::memory_order_relaxed);
+
+        juce::FloatVectorOperations::copy(buffer.getWritePointer(0), mono, numSamples);
+        juce::FloatVectorOperations::copy(buffer.getWritePointer(1), right, numSamples);
+
+        for (int channel = 2; channel < numOutputs; ++channel)
+            juce::FloatVectorOperations::copy(buffer.getWritePointer(channel), mono, numSamples);
+
+        return;
+    }
+
+    const bool produced = mSlot.process(mono, numSamples, params);
     if (!produced)
     {
         // No model loaded: pass the lane's signal through untouched rather than
@@ -258,18 +305,23 @@ void NamBlockProcessor::updateLatency()
 
 void NamBlockProcessor::loadModel(const juce::File& namFile)
 {
+    // Both instances get the same capture: they are the two channels of one amp,
+    // not two different amps.
     mLoader.loadFromFile(0, namFile);
+    mLoader.loadFromFile(1, namFile);
 }
 
 void NamBlockProcessor::loadModelFromJson(const juce::String& json, const juce::String& name,
                                           const juce::String& path)
 {
     mLoader.loadFromJson(0, json, name, path);
+    mLoader.loadFromJson(1, json, name, path);
 }
 
 void NamBlockProcessor::clearModel()
 {
     mLoader.clearSlot(0);
+    mLoader.clearSlot(1);
 }
 
 void NamBlockProcessor::getStateInformation(juce::MemoryBlock& destData)
@@ -298,9 +350,9 @@ void NamBlockProcessor::setStateInformation(const void* data, int sizeInBytes)
     juce::String json, name, path;
 
     if (nammodeler::state::fromValueTree(slotTree, json, name, path))
-        mLoader.loadFromJson(0, json, name, path);
+        loadModelFromJson(json, name, path);
     else
-        mLoader.clearSlot(0);
+        clearModel();
 }
 
 } // namespace blockrig

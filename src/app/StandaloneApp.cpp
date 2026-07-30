@@ -5,6 +5,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "BlockRigProcessor.h"
+#include "host/BlockInstance.h"
 #include "host/PluginCatalog.h"
 #include "host/PluginScannerWorker.h"
 #include "ui/MainView.h"
@@ -60,6 +61,14 @@ public:
         if (commandLine.contains("--audio-check"))
         {
             runAudioCheck();
+            return;
+        }
+
+        // Reports what a hosted plug-in negotiates and whether it really produces
+        // stereo, which no amount of listening can pin down precisely.
+        if (commandLine.contains("--plugin-check"))
+        {
+            runPluginCheck(commandLine.fromFirstOccurrenceOf("--plugin-check", false, false).trim());
             return;
         }
 
@@ -258,6 +267,80 @@ private:
     };
 
     std::unique_ptr<StatusLogger> mStatusLogger;
+
+    /// Instantiates every catalogued plug-in matching `fragment` exactly as the
+    /// chain would, and reports its negotiated channel layout and whether it
+    /// actually produces a stereo image from a mono-identical input.
+    void runPluginCheck(const juce::String& fragment)
+    {
+        PluginCatalog catalog;
+        catalog.setStorageDirectory(getStorageDirectory());
+        catalog.loadFromStorage();
+
+        const auto types = catalog.getKnownPluginList().getTypes();
+        int checked = 0;
+
+        std::printf("Searching %d catalogued plug-ins for \"%s\"\n\n", types.size(),
+                    fragment.toRawUTF8());
+
+        for (const auto& description : types)
+        {
+            if (fragment.isNotEmpty() && !description.name.containsIgnoreCase(fragment))
+                continue;
+
+            if (++checked > 6)
+                break;
+
+            juce::String error;
+            auto instance = catalog.getFormatManager().createPluginInstance(description, 48000.0, 512, error);
+
+            if (instance == nullptr)
+            {
+                std::printf("%-34s could not load: %s\n", description.name.toRawUTF8(),
+                            error.toRawUTF8());
+                continue;
+            }
+
+            BlockInstance block(std::move(instance), "check");
+            block.prepare(48000.0, 512);
+
+            auto* plugin = block.getPlugin();
+
+            // Identical content on both sides, which is what a mono guitar
+            // becomes in the lane. A stereo plug-in should decorrelate it.
+            juce::AudioBuffer<float> buffer(2, 512);
+            juce::MidiBuffer midi;
+
+            for (int pass = 0; pass < 40; ++pass)
+            {
+                for (int channel = 0; channel < 2; ++channel)
+                {
+                    auto* data = buffer.getWritePointer(channel);
+                    for (int i = 0; i < 512; ++i)
+                        data[i] = 0.25f * std::sin(0.07f * static_cast<float>(pass * 512 + i));
+                }
+
+                midi.clear();
+                block.process(buffer, midi, 512.0 / 48000.0);
+            }
+
+            double difference = 0.0;
+            for (int i = 0; i < 512; ++i)
+                difference += std::abs(buffer.getReadPointer(0)[i] - buffer.getReadPointer(1)[i]);
+            difference /= 512.0;
+
+            std::printf("%-34s %d in / %d out%s   L-R difference %.5f  %s\n",
+                        description.name.toRawUTF8(), plugin->getTotalNumInputChannels(),
+                        plugin->getTotalNumOutputChannels(),
+                        block.isMonoOnly() ? "  MONO-ONLY" : "          ", difference,
+                        difference > 1.0e-4 ? "STEREO" : "mono/identical");
+        }
+
+        if (checked == 0)
+            std::printf("Nothing matched. Has the catalogue been scanned?\n");
+
+        juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
+    }
 
     /// Prints the real audio configuration and measures the input for a few
     /// seconds. Diagnostic, but also the fastest way for a user to answer "is my

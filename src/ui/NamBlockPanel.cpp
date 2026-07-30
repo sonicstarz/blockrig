@@ -61,6 +61,11 @@ NamBlockPanel::NamBlockPanel(NamBlockProcessor& processor)
     addAndMakeVisible(mCalibrateInput);
     mCalibrateInputAtt = std::make_unique<ButtonAttachment>(apvts, "cal_in", mCalibrateInput);
 
+    mStereo.setTooltip("Runs the capture twice, once per channel, so a stereo signal stays stereo through "
+                       "the amp. Costs a second model instance.");
+    addAndMakeVisible(mStereo);
+    mStereoAtt = std::make_unique<ButtonAttachment>(apvts, "stereo", mStereo);
+
     styleCaption(mOutputModeLabel, "Output mode");
     addAndMakeVisible(mOutputModeLabel);
     mOutputMode.addItemList({"Raw", "Normalized", "Calibrated"}, 1);
@@ -269,9 +274,10 @@ void NamBlockPanel::resized()
     area.removeFromTop(theme::metrics::gap);
 
     auto toggles = area.removeFromTop(26);
-    mEqOn.setBounds(toggles.removeFromLeft(70));
-    mGateOn.setBounds(toggles.removeFromLeft(80));
-    mCalibrateInput.setBounds(toggles.removeFromLeft(150));
+    mEqOn.setBounds(toggles.removeFromLeft(64));
+    mGateOn.setBounds(toggles.removeFromLeft(74));
+    mCalibrateInput.setBounds(toggles.removeFromLeft(138));
+    mStereo.setBounds(toggles.removeFromLeft(116));
 
     auto mode = toggles.removeFromRight(240);
     mOutputModeLabel.setBounds(mode.removeFromLeft(90));

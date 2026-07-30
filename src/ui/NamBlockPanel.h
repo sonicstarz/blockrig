@@ -51,13 +51,14 @@ private:
     juce::Label mInTrimLabel, mBassLabel, mMidLabel, mTrebleLabel, mOutTrimLabel, mCalDbuLabel, mSlimLabel,
         mGateThresholdLabel;
 
-    juce::ToggleButton mEqOn{"EQ"}, mGateOn{"Gate"}, mCalibrateInput{"Calibrate input"};
+    juce::ToggleButton mEqOn{"EQ"}, mGateOn{"Gate"}, mCalibrateInput{"Calibrate input"},
+        mStereo{"True stereo"};
     juce::ComboBox mOutputMode;
     juce::Label mOutputModeLabel;
 
     std::unique_ptr<SliderAttachment> mInTrimAtt, mBassAtt, mMidAtt, mTrebleAtt, mOutTrimAtt, mCalDbuAtt, mSlimAtt,
         mGateThresholdAtt;
-    std::unique_ptr<ButtonAttachment> mEqOnAtt, mGateOnAtt, mCalibrateInputAtt;
+    std::unique_ptr<ButtonAttachment> mEqOnAtt, mGateOnAtt, mCalibrateInputAtt, mStereoAtt;
     std::unique_ptr<ComboAttachment> mOutputModeAtt;
 
     std::unique_ptr<juce::FileChooser> mFileChooser;

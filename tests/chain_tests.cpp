@@ -601,6 +601,35 @@ void testNamBlock(const juce::File& modelsDir)
     }
 
     check(restoredOk, "capture restored from embedded state without touching the file");
+
+    // A mono capture folded the rig to mono, so anything after an amp lost its
+    // image. True stereo runs the model per channel instead.
+    {
+        juce::AudioBuffer<float> buffer(2, kBlockSize);
+        juce::MidiBuffer midi;
+
+        for (int block = 0; block < 24; ++block)
+        {
+            // Deliberately different content per side.
+            for (int i = 0; i < kBlockSize; ++i)
+            {
+                const auto t = static_cast<float>(block * kBlockSize + i);
+                buffer.getWritePointer(0)[i] = 0.2f * std::sin(0.05f * t);
+                buffer.getWritePointer(1)[i] = 0.2f * std::sin(0.011f * t);
+            }
+
+            midi.clear();
+            namProcessor->processBlock(buffer, midi);
+        }
+
+        double difference = 0.0;
+        for (int i = 0; i < kBlockSize; ++i)
+            difference += std::abs(buffer.getReadPointer(0)[i] - buffer.getReadPointer(1)[i]);
+        difference /= kBlockSize;
+
+        std::printf("       L-R difference through the amp: %.5f\n", difference);
+        check(difference > 1.0e-4, "the amp block keeps left and right distinct in true-stereo mode");
+    }
 }
 } // namespace
 

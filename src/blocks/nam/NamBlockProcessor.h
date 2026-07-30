@@ -89,6 +89,10 @@ private:
     juce::AudioProcessorValueTreeState mApvts;
 
     nammodeler::AmpSlot mSlot;
+    /// Second model instance for true-stereo mode. A capture is mono, so keeping
+    /// a stereo image through an amp block means running the model twice, once
+    /// per channel — otherwise everything downstream starts from identical L/R.
+    nammodeler::AmpSlot mSlotRight;
     nammodeler::NoiseGate mGate;
     nammodeler::ModelLoader mLoader;
 
@@ -96,6 +100,7 @@ private:
     juce::String mError;
 
     juce::AudioBuffer<float> mMono;
+    juce::AudioBuffer<float> mRightScratch;
     std::atomic<float> mInputLevel{0.0f};
     std::atomic<float> mOutputLevel{0.0f};
     int mReportedLatency = 0;
