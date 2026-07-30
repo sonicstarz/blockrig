@@ -77,9 +77,13 @@ void BlockChain::prepareLane(bool force)
         {
             bool stageIsMono = true;
 
+            const bool dualMonoSplit = stage.rows.size() > 1 && stage.mode == StageMode::dualMono;
+
             for (auto& row : stage.rows)
             {
-                bool rowIsMono = mono;
+                // A dual-mono row receives a single channel of the stage's input
+                // whatever arrives, so its blocks are mono-fed by construction.
+                bool rowIsMono = dualMonoSplit || mono;
 
                 for (auto& block : row.blocks)
                 {
@@ -638,8 +642,25 @@ void BlockChain::processStage(RenderStage& stage, juce::AudioBuffer<float>& buff
         auto& row = stage.rows[rowIndex];
         auto& work = mRowBuffers[rowIndex];
 
-        for (int channel = 0; channel < numChannels; ++channel)
-            work.copyFrom(channel, 0, mStageInput, channel, 0, numSamples);
+        if (stage.mode == StageMode::dualMono)
+        {
+            // Row A is the left path and row B the right, on the way IN as well
+            // as out. Feeding both rows the full stereo signal and summing after
+            // - what this used to do - mono-sums the stage's input, which puts
+            // every tap of an upstream ping-pong back in the middle before the
+            // amps ever see it. A dual-mono split fed stereo must behave like a
+            // real two-amp rig: left channel to amp A, right channel to amp B.
+            // Fed mono, both channels are identical and nothing changes.
+            const int sourceChannel = juce::jmin(static_cast<int>(rowIndex), numChannels - 1);
+
+            for (int channel = 0; channel < numChannels; ++channel)
+                work.copyFrom(channel, 0, mStageInput, sourceChannel, 0, numSamples);
+        }
+        else
+        {
+            for (int channel = 0; channel < numChannels; ++channel)
+                work.copyFrom(channel, 0, mStageInput, channel, 0, numSamples);
+        }
 
         for (auto* block : row.blocks)
             block->process(work, midi, bufferDuration);

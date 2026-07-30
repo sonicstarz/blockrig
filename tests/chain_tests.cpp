@@ -392,6 +392,36 @@ void testParallelSplit()
     // right, which is the two-amp rig people build splits for.
     check(chain.getStageMode(0) == blockrig::BlockChain::StageMode::dualMono, "splits default to dual mono");
 
+    // A dual-mono split fed stereo must route left to row A and right to row B,
+    // like a real two-amp rig. Summing the stage's input per row - the old
+    // behaviour - centres every tap of an upstream ping-pong before the amps see
+    // it. With no blocks in either row the split must therefore pass a stereo
+    // signal through unchanged, not mono-sum it.
+    {
+        blockrig::BlockChain routing;
+        routing.prepare(kSampleRate, kBlockSize);
+        routing.appendEmptyStage();
+        routing.splitStage(0);
+
+        juce::AudioBuffer<float> buffer(2, kBlockSize);
+        juce::MidiBuffer midi;
+
+        // Hard-panned: signal on the left, silence on the right.
+        for (int i = 0; i < kBlockSize; ++i)
+        {
+            buffer.setSample(0, i, 0.5f * std::sin(0.05f * static_cast<float>(i)));
+            buffer.setSample(1, i, 0.0f);
+        }
+
+        routing.process(buffer, midi);
+
+        const auto left = buffer.getMagnitude(0, 0, kBlockSize);
+        const auto right = buffer.getMagnitude(1, 0, kBlockSize);
+        std::printf("       empty dual-mono split, left-only in: left %.4f, right %.4f\n", left, right);
+        check(left > 0.4f, "left signal survives on the left");
+        check(right < 0.01f, "nothing leaks onto the right");
+    }
+
     // The behaviour that matters: turning one side down must change only that
     // side of the output. Anything else means the sides are not independent.
     {
