@@ -67,37 +67,59 @@ void BlockChain::prepareLane(bool force)
     if (!mPrepared)
         return;
 
-    bool mono = mSourceIsMono;
+    // Two passes. The first only decides who needs re-preparing, so the audio
+    // thread is suspended exactly when a live plug-in is about to be touched and
+    // not on every lane edit.
+    const auto walk = [this, force](auto&& visit) {
+        bool mono = mSourceIsMono;
 
-    for (auto& stage : mLane)
-    {
-        bool stageIsMono = true;
-
-        for (auto& row : stage.rows)
+        for (auto& stage : mLane)
         {
-            bool rowIsMono = mono;
+            bool stageIsMono = true;
 
-            for (auto& block : row.blocks)
+            for (auto& row : stage.rows)
             {
-                if (force || !block->hasBeenPrepared() || block->getSourceIsMono() != rowIsMono)
-                    block->prepare(mSampleRate, mMaxBlockSize, rowIsMono);
+                bool rowIsMono = mono;
 
-                // Once something emits two channels the signal is no longer a
-                // single channel, whatever it does with them.
-                if (block->producesStereo())
-                    rowIsMono = false;
+                for (auto& block : row.blocks)
+                {
+                    if (force || !block->hasBeenPrepared() || block->layoutDrifted()
+                        || block->getSourceIsMono() != rowIsMono)
+                        visit(*block, rowIsMono);
+
+                    // Once something emits two channels the signal is no longer a
+                    // single channel, whatever it does with them.
+                    if (block->producesStereo())
+                        rowIsMono = false;
+                }
+
+                stageIsMono = stageIsMono && rowIsMono;
             }
 
-            stageIsMono = stageIsMono && rowIsMono;
+            // A dual-mono split puts one row on each side, so the stage is stereo
+            // by construction even when both rows are individually mono.
+            if (stage.rows.size() > 1 && stage.mode == StageMode::dualMono)
+                stageIsMono = false;
+
+            mono = stageIsMono;
         }
+    };
 
-        // A dual-mono split puts one row on each side, so the stage is stereo by
-        // construction even when both rows are individually mono.
-        if (stage.rows.size() > 1 && stage.mode == StageMode::dualMono)
-            stageIsMono = false;
+    bool anyToPrepare = false;
+    walk([&anyToPrepare](BlockInstance&, bool) { anyToPrepare = true; });
 
-        mono = stageIsMono;
-    }
+    if (!anyToPrepare)
+        return;
+
+    if (suspendAudio)
+        suspendAudio(true);
+
+    walk([this](BlockInstance& block, bool rowIsMono) {
+        block.prepare(mSampleRate, mMaxBlockSize, rowIsMono);
+    });
+
+    if (suspendAudio)
+        suspendAudio(false);
 }
 
 void BlockChain::release()
@@ -268,6 +290,9 @@ void BlockChain::moveBlock(const juce::String& uid, BlockPosition position)
 
     row.blocks.insert(row.blocks.begin() + index, std::move(moved));
 
+    // Moving the widening block changes what is mono both where it left and
+    // where it landed.
+    prepareLane(false);
     publishSnapshot();
     collectGarbage();
 }
@@ -315,6 +340,7 @@ bool BlockChain::mergeStage(int stageIndex)
     stage.rows.resize(1);
     stage.rows.front().pan = 0.0f; // back to centre now that it is alone
 
+    prepareLane(false);
     publishSnapshot();
     collectGarbage();
     return true;
@@ -326,6 +352,9 @@ void BlockChain::setStageMode(int stageIndex, StageMode mode)
         return;
 
     mLane[static_cast<size_t>(stageIndex)].mode = mode;
+    // dualMono versus parallel changes whether the stage counts as mono for
+    // everything after it.
+    prepareLane(false);
     publishSnapshot();
     collectGarbage();
 }

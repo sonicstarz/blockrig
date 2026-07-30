@@ -75,7 +75,9 @@ void BlockInstance::prepare(double sampleRate, int maxBlockSize, bool sourceIsMo
     mPlugin->setRateAndBufferSizeDetails(sampleRate, maxBlockSize);
     mPlugin->prepareToPlay(sampleRate, maxBlockSize);
 
-    mProducesStereo = mPlugin->getTotalNumOutputChannels() >= 2;
+    mNegotiatedIns = mPlugin->getTotalNumInputChannels();
+    mNegotiatedOuts = mPlugin->getTotalNumOutputChannels();
+    mProducesStereo = mNegotiatedOuts >= 2;
 
     if (mMonoOnly)
         mMonoScratch.setSize(juce::jmax(1, mPlugin->getTotalNumOutputChannels()), maxBlockSize, false, true, true);

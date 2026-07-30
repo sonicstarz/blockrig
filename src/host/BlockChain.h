@@ -133,6 +133,17 @@ public:
     /// sync to the rig's tempo.
     void setPlayHead(juce::AudioPlayHead* playHead);
 
+    /// Called with true before re-preparing any block that is in the published
+    /// snapshot, and false after.
+    ///
+    /// Re-negotiating a bus layout and re-preparing a plug-in are not audio-safe:
+    /// the audio thread may be inside that plug-in's processBlock at that moment.
+    /// The harness has no audio thread, which is exactly why every measurement
+    /// there was clean while the live app misbehaved. The owner wires this to
+    /// AudioProcessor::suspendProcessing, which takes the callback lock and so
+    /// guarantees processBlock is not running and will not start.
+    std::function<void(bool)> suspendAudio;
+
     /// Walks the lane in order, telling each block whether what reaches it is
     /// still a single channel. `force` re-prepares everything; otherwise only
     /// blocks whose answer changed are touched, so adding one block does not

@@ -101,6 +101,17 @@ public:
     /// counting as mono for everything downstream.
     bool producesStereo() const noexcept { return mProducesStereo; }
 
+    /// True when the plug-in's channel configuration no longer matches what was
+    /// negotiated in prepare(). setStateInformation can do this: a VST3 restoring
+    /// its internal configuration may rearrange its buses, and nothing tells the
+    /// host. A drifted block needs re-preparing.
+    bool layoutDrifted() const noexcept
+    {
+        return mPlugin != nullptr && mHasPrepared
+            && (mPlugin->getTotalNumInputChannels() != mNegotiatedIns
+                || mPlugin->getTotalNumOutputChannels() != mNegotiatedOuts);
+    }
+
     void setBypassed(bool shouldBypass) noexcept { mBypassed.store(shouldBypass, std::memory_order_relaxed); }
     bool isBypassed() const noexcept { return mBypassed.load(std::memory_order_relaxed); }
 
@@ -130,6 +141,8 @@ private:
     bool mSourceIsMono = false;
     bool mHasPrepared = false;
     bool mProducesStereo = false;
+    int mNegotiatedIns = 0;
+    int mNegotiatedOuts = 0;
     juce::AudioBuffer<float> mMonoScratch;
 
     BlockLoad mLoad;

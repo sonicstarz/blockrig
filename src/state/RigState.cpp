@@ -159,6 +159,11 @@ private:
 
                     if (readBack.isEmpty() && !saved.state.isEmpty())
                         mResult.stateNotRestored.add(saved.description.name);
+
+                    // The chunk may have rearranged the plug-in's buses; if its
+                    // channel counts drifted from what was negotiated, this
+                    // re-prepares it before anything downstream trusts them.
+                    mProcessor.getChain().prepareLane(false);
                 }
             }
         }

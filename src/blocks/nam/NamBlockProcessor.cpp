@@ -250,6 +250,18 @@ void NamBlockProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
             return;
         }
 
+        // The two slots load asynchronously, one after the other, so there is a
+        // window - and a failure mode - where only one side has a model. Mirror
+        // the amped side rather than emitting the dry signal on the other:
+        // amp-left-dry-right is far more wrong than a moment of mono.
+        if (leftProduced != rightProduced)
+        {
+            if (leftProduced)
+                juce::FloatVectorOperations::copy(right, mono, numSamples);
+            else
+                juce::FloatVectorOperations::copy(mono, right, numSamples);
+        }
+
         if (gateEnabled)
         {
             mGate.applyGain(mono, numSamples);

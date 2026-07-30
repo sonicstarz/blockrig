@@ -61,6 +61,9 @@ BlockRigProcessor::BlockRigProcessor()
 {
     mCatalog.loadFromStorage();
     mChain.setPlayHead(&mTransport);
+    // Re-preparing a live block must exclude the audio thread; suspendProcessing
+    // takes the callback lock, so processBlock is not running and will not start.
+    mChain.suspendAudio = [this](bool suspend) { suspendProcessing(suspend); };
     mLatencyPoller = std::make_unique<LatencyPoller>(*this);
 
     // SmoothedValue starts at 0, so if a processBlock ever arrives before
