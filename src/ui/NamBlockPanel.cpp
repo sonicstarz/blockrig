@@ -1,5 +1,7 @@
 #include "ui/NamBlockPanel.h"
 
+#include <map>
+
 #include "ui/BlockCategories.h"
 #include "ui/Theme.h"
 
@@ -113,14 +115,35 @@ void NamBlockPanel::showLibraryMenu()
     }
     else
     {
-        // Newest first: the capture someone just downloaded is the one they want.
+        // Newest first; subfolders of the library folder become submenus, so
+        // organising in Finder is organising the menu.
         const auto currentName = mProcessor.getModelInfo().name;
+
+        std::map<juce::String, juce::PopupMenu> folders;
+        juce::StringArray folderOrder;
         int id = 100;
 
         for (const auto& entry : entries)
-            menu.addItem(juce::PopupMenu::Item(entry.name)
-                             .setID(id++)
-                             .setTicked(entry.name == currentName));
+        {
+            const auto item = juce::PopupMenu::Item(entry.name)
+                                  .setID(id++)
+                                  .setTicked(entry.name == currentName);
+
+            if (entry.folder.isEmpty())
+            {
+                menu.addItem(item);
+            }
+            else
+            {
+                if (folders.find(entry.folder) == folders.end())
+                    folderOrder.add(entry.folder);
+                folders[entry.folder].addItem(item);
+            }
+        }
+
+        folderOrder.sortNatural();
+        for (const auto& folder : folderOrder)
+            menu.addSubMenu(folder, folders[folder]);
     }
 
     menu.addSeparator();

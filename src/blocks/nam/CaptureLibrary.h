@@ -25,10 +25,15 @@ public:
     {
         juce::File file;
         juce::String name;
+        /// Path relative to the library root ("Marshalls/High gain"), empty for
+        /// the root. Folders are made and arranged in Finder - the library just
+        /// reflects them, so organising captures needs no in-app file manager.
+        juce::String folder;
         juce::Time added;
     };
 
-    /// Newest first, which is also "most likely wanted next".
+    /// Newest first, which is also "most likely wanted next". Recurses into
+    /// subfolders.
     juce::Array<Entry> getEntries() const;
 
     /// Copies a capture in. Content-deduplicated: re-loading the same file is a
