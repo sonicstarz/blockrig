@@ -325,11 +325,17 @@ private:
 
             const auto blocks = mProcessor.getProcessBlockCount();
 
+            const auto probe = mProcessor.getWidthProbe();
+
             mFile.appendText("levels: in " + juce::String(mPeakIn, 5) + "  out "
                              + juce::String(mPeakOut, 5) + "  L-R "
                              + juce::String(mProcessor.getStereoDifference(), 5) + "  muted "
                              + juce::String(mProcessor.isMuted() ? "yes" : "no") + "  processBlocks "
-                             + juce::String(blocks) + " (+" + juce::String(blocks - mLastBlockCount) + ")\n");
+                             + juce::String(blocks) + " (+" + juce::String(blocks - mLastBlockCount) + ")"
+                             + "  width[buf " + juce::String(probe.channels) + "ch  in "
+                             + juce::String(probe.afterInput, 5) + "  chain "
+                             + juce::String(probe.afterChain, 5) + "  out "
+                             + juce::String(probe.atOutput, 5) + "]\n");
 
             mLastBlockCount = blocks;
             mPeakIn = 0.0f;
@@ -449,30 +455,47 @@ private:
 
             std::printf("\n");
         }
-        // Add the requested plug-in, if any, and wait for it to arrive.
+        // Comma-separated, in order, so the effect of chain ORDER can be measured
+        // rather than asserted - "put the delay after the amp" is worth nothing as
+        // advice until the numbers back it.
         else if (fragment.isNotEmpty())
         {
             const auto types = mProcessor->getCatalog().getKnownPluginList().getTypes();
-            bool requested = false;
+            juce::StringArray wanted;
+            wanted.addTokens(fragment, ",", "");
+            wanted.trim();
+            wanted.removeEmptyStrings();
 
-            for (const auto& description : types)
+            int stage = 0;
+
+            for (const auto& want : wanted)
             {
-                if (!description.name.containsIgnoreCase(fragment))
+                bool found = false;
+
+                for (const auto& description : types)
+                {
+                    if (!description.name.containsIgnoreCase(want))
+                        continue;
+
+                    std::printf("Adding %s\n", description.name.toRawUTF8());
+                    mProcessor->addBlock(description, BlockPosition{stage, 0, 0, true});
+                    found = true;
+                    break;
+                }
+
+                if (!found)
+                {
+                    std::printf("Nothing in the catalogue matched \"%s\"\n", want.toRawUTF8());
                     continue;
+                }
 
-                std::printf("Adding %s\n", description.name.toRawUTF8());
-                mProcessor->addBlock(description, BlockPosition{0, 0, 0});
-                requested = true;
-                break;
-            }
+                // Instantiation is asynchronous, and the next block must land
+                // after this one, so wait for each in turn.
+                const int expected = stage + 1;
+                for (int i = 0; i < 200 && mProcessor->getChain().getNumBlocks() < expected; ++i)
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
 
-            if (!requested)
-                std::printf("Nothing in the catalogue matched \"%s\"\n", fragment.toRawUTF8());
-
-            // Instantiation is asynchronous, so let the message loop run.
-            for (int i = 0; i < 200 && mProcessor->getChain().getNumBlocks() == 0; ++i)
-            {
-                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                ++stage;
             }
         }
 

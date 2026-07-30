@@ -137,6 +137,28 @@ public:
     /// sides are identical, i.e. the rig is mono however many channels it uses.
     float getStereoDifference() const { return mStereoDifference.load(std::memory_order_relaxed); }
 
+    /// Channel difference measured at three points in one processBlock: as the
+    /// signal arrives, after the chain, and at the very end.
+    ///
+    /// Reasoning about where a stereo image is lost has repeatedly pointed at the
+    /// wrong layer. This measures it in the running app, on the real device, so
+    /// "the rig is mono" can be attributed rather than guessed at.
+    struct WidthProbe
+    {
+        float afterInput = 0.0f;
+        float afterChain = 0.0f;
+        float atOutput = 0.0f;
+        int channels = 0;
+    };
+
+    WidthProbe getWidthProbe() const
+    {
+        return {mWidthAfterInput.load(std::memory_order_relaxed),
+                mWidthAfterChain.load(std::memory_order_relaxed),
+                mWidthAtOutput.load(std::memory_order_relaxed),
+                mBufferChannels.load(std::memory_order_relaxed)};
+    }
+
 private:
     void updateLatency();
 
@@ -169,6 +191,10 @@ private:
     std::atomic<float> mOutputLeft{0.0f};
     std::atomic<float> mOutputRight{0.0f};
     std::atomic<float> mStereoDifference{0.0f};
+    std::atomic<float> mWidthAfterInput{0.0f};
+    std::atomic<float> mWidthAfterChain{0.0f};
+    std::atomic<float> mWidthAtOutput{0.0f};
+    std::atomic<int> mBufferChannels{0};
 
     int mReportedLatency = 0;
 

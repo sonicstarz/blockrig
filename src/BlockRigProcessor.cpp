@@ -9,6 +9,23 @@ namespace
 constexpr float kSmoothingSeconds = 0.02f;
 constexpr double kFallbackSampleRate = 48000.0;
 constexpr int kFallbackBlockSize = 512;
+
+/// Mean absolute difference between the first two channels. Zero means the two
+/// sides are bit-identical, which is what "mono on two channels" looks like.
+float measureWidth(const juce::AudioBuffer<float>& buffer, int numSamples)
+{
+    if (buffer.getNumChannels() < 2 || numSamples <= 0)
+        return 0.0f;
+
+    const auto* left = buffer.getReadPointer(0);
+    const auto* right = buffer.getReadPointer(1);
+    float total = 0.0f;
+
+    for (int i = 0; i < numSamples; ++i)
+        total += std::abs(left[i] - right[i]);
+
+    return total / static_cast<float>(numSamples);
+}
 } // namespace
 
 /// Plug-ins may change their reported latency at any time — switching lookahead
@@ -184,7 +201,12 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     mInputLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
 
+    mBufferChannels.store(buffer.getNumChannels(), std::memory_order_relaxed);
+    mWidthAfterInput.store(measureWidth(buffer, numSamples), std::memory_order_relaxed);
+
     mChain.process(buffer, midi);
+
+    mWidthAfterChain.store(measureWidth(buffer, numSamples), std::memory_order_relaxed);
 
     for (int channel = 0; channel < juce::jmin(numOutputs, buffer.getNumChannels()); ++channel)
     {
@@ -240,6 +262,7 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         mTestToneSamplesLeft.store(remaining - toPlay, std::memory_order_relaxed);
     }
 
+    mWidthAtOutput.store(measureWidth(buffer, numSamples), std::memory_order_relaxed);
     mOutputLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
 
     if (buffer.getNumChannels() >= 2)
