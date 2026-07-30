@@ -17,10 +17,13 @@ BlockInstance::~BlockInstance()
         mPlugin->releaseResources();
 }
 
-void BlockInstance::prepare(double sampleRate, int maxBlockSize)
+void BlockInstance::prepare(double sampleRate, int maxBlockSize, bool sourceIsMono)
 {
     if (mPlugin == nullptr)
         return;
+
+    mSourceIsMono = sourceIsMono;
+    mHasPrepared = true;
 
     // Negotiate a stereo layout properly rather than just asking for two
     // channels. setPlayConfigDetails alone does not consult the plug-in's bus
@@ -44,7 +47,18 @@ void BlockInstance::prepare(double sampleRate, int maxBlockSize)
 
     mMonoOnly = false;
 
-    if (!tryLayout(stereo, stereo))
+    // A mono source asks for mono in, stereo out first. Stereo/stereo would also
+    // succeed here, and that is the trap: the plug-in would then be handed two
+    // identical channels and process them symmetrically, so anything that builds
+    // its image from the difference between the sides - ping-pong, widening,
+    // mid/side - has nothing to work with and stays centred forever.
+    const bool widened = sourceIsMono && tryLayout(mono, stereo);
+
+    if (widened)
+    {
+        mMonoOnly = true;
+    }
+    else if (!tryLayout(stereo, stereo))
     {
         if (tryLayout(mono, stereo))
         {
@@ -60,6 +74,8 @@ void BlockInstance::prepare(double sampleRate, int maxBlockSize)
 
     mPlugin->setRateAndBufferSizeDetails(sampleRate, maxBlockSize);
     mPlugin->prepareToPlay(sampleRate, maxBlockSize);
+
+    mProducesStereo = mPlugin->getTotalNumOutputChannels() >= 2;
 
     if (mMonoOnly)
         mMonoScratch.setSize(juce::jmax(1, mPlugin->getTotalNumOutputChannels()), maxBlockSize, false, true, true);

@@ -63,7 +63,16 @@ public:
 
     /// Not real-time safe. Called on the message/loader thread before the block
     /// is published into a chain snapshot.
-    void prepare(double sampleRate, int maxBlockSize);
+    /// `sourceIsMono` says the signal arriving here is a single channel - either
+    /// the rig's input is mono, or nothing upstream has widened it yet.
+    ///
+    /// It changes which bus layout we ask for, and that is not cosmetic. Handing a
+    /// stereo-in/stereo-out plug-in two identical channels makes it symmetric:
+    /// a ping-pong delay cross-feeds L into R and R into L, so with L == R the
+    /// two sides evolve identically and it can never ping-pong. Mono in,
+    /// stereo out is what a DAW gives a plug-in on a mono track, and it is what
+    /// makes such a plug-in generate a stereo image rather than preserve one.
+    void prepare(double sampleRate, int maxBlockSize, bool sourceIsMono = false);
     void release();
 
     /// Audio thread. Processes in place; honours bypass; records its own cost.
@@ -78,6 +87,19 @@ public:
     /// the mono sum and its result copied to both sides, rather than being left
     /// to process the left channel and pass the right through untouched.
     bool isMonoOnly() const noexcept { return mMonoOnly; }
+
+    /// What this block was told about its input, so the chain can tell whether a
+    /// re-negotiation is needed without re-preparing everything.
+    bool getSourceIsMono() const noexcept { return mSourceIsMono; }
+
+    /// A block that has never been prepared must be, whatever the lane thinks
+    /// changed - an unprepared plug-in has unsized buffers and crashes on its
+    /// first process call.
+    bool hasBeenPrepared() const noexcept { return mHasPrepared; }
+
+    /// True when the plug-in emits two channels, which is what stops the signal
+    /// counting as mono for everything downstream.
+    bool producesStereo() const noexcept { return mProducesStereo; }
 
     void setBypassed(bool shouldBypass) noexcept { mBypassed.store(shouldBypass, std::memory_order_relaxed); }
     bool isBypassed() const noexcept { return mBypassed.load(std::memory_order_relaxed); }
@@ -105,6 +127,9 @@ private:
     std::atomic<bool> mBypassed{false};
     bool mLastAppliedBypass = false;
     bool mMonoOnly = false;
+    bool mSourceIsMono = false;
+    bool mHasPrepared = false;
+    bool mProducesStereo = false;
     juce::AudioBuffer<float> mMonoScratch;
 
     BlockLoad mLoad;

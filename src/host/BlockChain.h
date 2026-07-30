@@ -93,6 +93,12 @@ public:
     // Message-thread API. None of this is real-time safe.
 
     void prepare(double sampleRate, int maxBlockSize);
+
+    /// Tells the lane the rig's input is a single channel, so the first blocks
+    /// negotiate mono in / stereo out rather than being fed two identical
+    /// channels. Re-negotiates any block whose situation changed.
+    void setSourceIsMono(bool sourceIsMono);
+    bool getSourceIsMono() const noexcept { return mSourceIsMono; }
     void release();
 
     /// Takes ownership. The block must already be prepared.
@@ -126,6 +132,12 @@ public:
     /// Applied to every block, now and as new ones arrive, so hosted plug-ins can
     /// sync to the rig's tempo.
     void setPlayHead(juce::AudioPlayHead* playHead);
+
+    /// Walks the lane in order, telling each block whether what reaches it is
+    /// still a single channel. `force` re-prepares everything; otherwise only
+    /// blocks whose answer changed are touched, so adding one block does not
+    /// re-initialise every plug-in in the rig.
+    void prepareLane(bool force);
 
     void collectGarbage();
     bool refreshLatency();
@@ -198,6 +210,7 @@ private:
     double mSampleRate = 48000.0;
     int mMaxBlockSize = 512;
     bool mPrepared = false;
+    bool mSourceIsMono = false;
 
     BlockLoad mTotalLoad;
     std::atomic<int> mDropouts{0};

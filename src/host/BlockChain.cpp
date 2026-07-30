@@ -40,15 +40,64 @@ void BlockChain::prepare(double sampleRate, int maxBlockSize)
     mStageInput.setSize(2, mMaxBlockSize, false, true, true);
     mAccumulator.setSize(2, mMaxBlockSize, false, true, true);
 
-    for (auto& stage : mLane)
-        for (auto& row : stage.rows)
-            for (auto& block : row.blocks)
-                block->prepare(mSampleRate, mMaxBlockSize);
+    prepareLane(true);
 
     mTotalLoad.reset();
     mDropouts.store(0, std::memory_order_relaxed);
 
     publishSnapshot();
+}
+
+void BlockChain::setSourceIsMono(bool sourceIsMono)
+{
+    if (mSourceIsMono == sourceIsMono)
+        return;
+
+    mSourceIsMono = sourceIsMono;
+
+    if (mPrepared)
+    {
+        prepareLane(false);
+        publishSnapshot();
+    }
+}
+
+void BlockChain::prepareLane(bool force)
+{
+    if (!mPrepared)
+        return;
+
+    bool mono = mSourceIsMono;
+
+    for (auto& stage : mLane)
+    {
+        bool stageIsMono = true;
+
+        for (auto& row : stage.rows)
+        {
+            bool rowIsMono = mono;
+
+            for (auto& block : row.blocks)
+            {
+                if (force || !block->hasBeenPrepared() || block->getSourceIsMono() != rowIsMono)
+                    block->prepare(mSampleRate, mMaxBlockSize, rowIsMono);
+
+                // Once something emits two channels the signal is no longer a
+                // single channel, whatever it does with them.
+                if (block->producesStereo())
+                    rowIsMono = false;
+            }
+
+            stageIsMono = stageIsMono && rowIsMono;
+        }
+
+        // A dual-mono split puts one row on each side, so the stage is stereo by
+        // construction even when both rows are individually mono.
+        if (stage.rows.size() > 1 && stage.mode == StageMode::dualMono)
+            stageIsMono = false;
+
+        mono = stageIsMono;
+    }
 }
 
 void BlockChain::release()
@@ -101,9 +150,6 @@ void BlockChain::insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition
     if (block == nullptr)
         return;
 
-    if (mPrepared)
-        block->prepare(mSampleRate, mMaxBlockSize);
-
     // New blocks need the tempo too, or a synced delay added mid-session runs
     // free while everything around it stays in time.
     if (auto* plugin = block->getPlugin())
@@ -124,6 +170,11 @@ void BlockChain::insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition
 
     const int index = juce::jlimit(0, static_cast<int>(row.blocks.size()), position.index);
     row.blocks.insert(row.blocks.begin() + index, std::move(block));
+
+    // After insertion: the walk has to be able to see the new block, and what
+    // reaches everything downstream of it may have just changed.
+    if (mPrepared)
+        prepareLane(false);
 
     publishSnapshot();
     collectGarbage();

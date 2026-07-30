@@ -543,15 +543,25 @@ private:
             }
         }
 
-        std::printf("Chain has %d block(s)\n\n", mProcessor->getChain().getNumBlocks());
+        std::printf("Chain has %d block(s)\n", mProcessor->getChain().getNumBlocks());
+
 
         // One input channel and two outputs: the guitarist's real configuration,
         // and not the same test as feeding it an idealised stereo pair.
         mProcessor->setPlayConfigDetails(1, 2, sampleRate, blockSize);
         mProcessor->prepareToPlay(sampleRate, blockSize);
 
-        std::printf("Processor negotiated %d in / %d out\n\n",
+        std::printf("Processor negotiated %d in / %d out\n",
                     mProcessor->getTotalNumInputChannels(), mProcessor->getTotalNumOutputChannels());
+
+        for (auto* block : mProcessor->getChain().getBlocks())
+            if (auto* plugin = block->getPlugin())
+                std::printf("  %-28s %d in / %d out  fed %s\n", block->getDisplayName().toRawUTF8(),
+                            plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels(),
+                            block->getSourceIsMono() ? "MONO" : "stereo");
+
+        std::printf("\n");
+
 
         // Hard-decorrelated input: left only. Anything that sums to mono halves
         // it onto both sides, which is unmistakable in the numbers.

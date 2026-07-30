@@ -91,8 +91,18 @@ public:
         stereo = 1
     };
 
-    void setInputMode(InputMode mode) { mInputMode = mode; }
+    void setInputMode(InputMode mode)
+    {
+        mInputMode = mode;
+        // Switching to mono has to re-negotiate the first blocks, or they stay
+        // stereo-in and get fed two identical channels.
+        mChain.setSourceIsMono(sourceIsMono());
+    }
     InputMode getInputMode() const { return mInputMode; }
+
+    /// True when the lane starts from a single channel, which changes how the
+    /// first blocks negotiate their bus layouts.
+    bool sourceIsMono() const;
 
     void setInputGainDb(float gainDb);
     void setOutputGainDb(float gainDb);

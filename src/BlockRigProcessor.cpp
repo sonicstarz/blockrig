@@ -81,6 +81,7 @@ BlockRigProcessor::~BlockRigProcessor()
 void BlockRigProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     mTransport.prepare(sampleRate);
+    mChain.setSourceIsMono(sourceIsMono());
     mChain.prepare(sampleRate, samplesPerBlock);
     mChain.setPlayHead(&mTransport);
 
@@ -110,6 +111,13 @@ bool BlockRigProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
         return false;
 
     return in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo();
+}
+
+bool BlockRigProcessor::sourceIsMono() const
+{
+    // Either the rig is set to mono, or the device only gives us one channel to
+    // begin with. Both mean the lane starts from a single channel.
+    return mInputMode == InputMode::mono || getTotalNumInputChannels() < 2;
 }
 
 void BlockRigProcessor::setInputGainDb(float gainDb)
