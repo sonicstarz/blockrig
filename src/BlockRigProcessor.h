@@ -9,6 +9,7 @@
 #include "host/PluginCatalog.h"
 #include "host/Transport.h"
 #include "dsp/PitchDetector.h"
+#include "state/Snapshots.h"
 
 namespace blockrig
 {
@@ -111,6 +112,12 @@ public:
     /// first blocks negotiate their bus layouts.
     bool sourceIsMono() const;
 
+    /// The standalone app calls this with false. Inside it there is no outer
+    /// host, and anything that ever registers a playhead on the processor -
+    /// hosts, players, test harnesses - would silently flip the transport into
+    /// follow mode, greying out BPM and TAP with no visible reason.
+    void setFollowsHostTransport(bool shouldFollow) { mFollowsHostTransport = shouldFollow; }
+
     void setInputGainDb(float gainDb);
     void setOutputGainDb(float gainDb);
     float getInputGainDb() const { return mInputGainDb; }
@@ -144,6 +151,8 @@ public:
     void setTunerActive(bool shouldBeActive) { mTunerActive.store(shouldBeActive, std::memory_order_relaxed); }
     bool isTunerActive() const { return mTunerActive.load(std::memory_order_relaxed); }
     PitchDetector& getPitchDetector() { return mPitchDetector; }
+
+    snapshots::Bank& getSnapshots() { return mSnapshotBank; }
     bool isTestTonePlaying() const { return mTestToneSamplesLeft.load(std::memory_order_relaxed) > 0; }
 
     /// How many times processBlock has run. Distinguishes "the audio callback
@@ -190,6 +199,7 @@ private:
     Transport mTransport;
 
     InputMode mInputMode = InputMode::mono;
+    bool mFollowsHostTransport = true;
     float mInputGainDb = 0.0f;
     float mOutputGainDb = 0.0f;
 
@@ -205,6 +215,7 @@ private:
 
     std::atomic<juce::int64> mProcessBlockCount{0};
     PitchDetector mPitchDetector;
+    snapshots::Bank mSnapshotBank;
     std::atomic<bool> mTunerActive{false};
 
     std::atomic<int> mTestToneSamplesLeft{0};

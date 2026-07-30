@@ -82,6 +82,7 @@ add_subdirectory(third_party/JUCE)
 set(BLOCKRIG_SOURCES
     src/BlockRigProcessor.cpp
     src/state/RigState.cpp
+    src/state/Snapshots.cpp
     src/state/RigFiles.cpp
     src/state/PluginState.cpp
     src/host/BlockChain.cpp
@@ -102,6 +103,8 @@ set(BLOCKRIG_SOURCES
     src/ui/CpuMeter.cpp
     src/ui/HeaderMeters.cpp
     src/ui/TransportBar.cpp
+    src/ui/AppShell.cpp
+    src/ui/SnapshotStrip.cpp
     src/ui/TunerPanel.cpp
     src/ui/LaneView.cpp
     src/ui/BlockPicker.cpp
@@ -287,6 +290,7 @@ if(BLOCKRIG_BUILD_TESTS)
         tests/headless_editor_stub.cpp
         src/BlockRigProcessor.cpp
         src/state/RigState.cpp
+    src/state/Snapshots.cpp
     src/state/RigFiles.cpp
         src/host/BlockChain.cpp
         src/host/BlockInstance.cpp

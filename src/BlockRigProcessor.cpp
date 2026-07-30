@@ -167,7 +167,9 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     // Inside a DAW the host owns the tempo, so mirror it and let our own clock
     // idle; standalone there is no other source, so we run the clock ourselves.
-    if (auto* hostPlayHead = getPlayHead())
+    auto* hostPlayHead = mFollowsHostTransport ? getPlayHead() : nullptr;
+
+    if (hostPlayHead != nullptr)
     {
         if (const auto hostPosition = hostPlayHead->getPosition())
             mTransport.followHost(*hostPosition);

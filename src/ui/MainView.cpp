@@ -683,6 +683,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     , mCpuMeter(processor)
     , mHeaderMeters(processor)
     , mTransportBar(processor)
+    , mSnapshots(processor)
     , mLane(processor)
 {
     setLookAndFeel(&mLook);
@@ -690,6 +691,9 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mTitle.setText("BLOCKRIG", juce::dontSendNotification);
     mTitle.setFont(juce::FontOptions(17.0f, juce::Font::bold));
     mTitle.setColour(juce::Label::textColourId, theme::colours::accent);
+    mTitle.setTooltip("Back to the home screen");
+    mTitle.setInterceptsMouseClicks(true, false);
+    mTitle.addMouseListener(this, false);
     addAndMakeVisible(mTitle);
 
     addAndMakeVisible(mCpuMeter);
@@ -705,40 +709,39 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mMuteButton.setTooltip("Mute the rig's output. Starts muted so nothing can feed back unexpectedly.");
     addAndMakeVisible(mMuteButton);
 
-    // Shows how many blocks are available, and becomes the prompt to scan when
-    // nothing has been scanned yet.
-    mPluginCountButton.onClick = [this] { startScan(); };
-    addAndMakeVisible(mPluginCountButton);
 
     mSettingsButton.onClick = [this] { showSettings(); };
     addAndMakeVisible(mSettingsButton);
 
     mTunerButton.setTooltip("Tune up. Silences the rig while open; closing brings the sound back.");
-    mTunerButton.onClick = [this] {
-        // Toggle: if it is already open, close it.
-        for (const auto& window : mWindows)
-            if (window->blockUid == "tuner")
-            {
-                closeWindow(window.get());
-                return;
-            }
-
-        auto panel = std::make_unique<TunerPanel>(mProcessor);
-        openUtilityWindow("Tuner", BlockCategory::utility, std::move(panel));
-        mWindows.back()->blockUid = "tuner";
-        mWindows.back()->setSize(TunerPanel::kPreferredWidth,
-                                 TunerPanel::kPreferredHeight + BlockWindow::kTitleBarHeight);
-    };
+    mTunerButton.onClick = [this] { showTuner(findWindowForBlock("tuner") == nullptr); };
     addAndMakeVisible(mTunerButton);
 
-    mRigButton.onClick = [this] { showRigMenu(); };
-    addAndMakeVisible(mRigButton);
-
-    mRigName.setFont(juce::FontOptions(12.5f));
-    mRigName.setColour(juce::Label::textColourId, theme::colours::textDim);
-    mRigName.setJustificationType(juce::Justification::centredLeft);
-    mRigName.setText("Untitled rig", juce::dontSendNotification);
+    mRigName.onClick = [this] { showRigMenu(); };
     addAndMakeVisible(mRigName);
+
+    mPrevRig.setTooltip("Previous rig");
+    mPrevRig.onClick = [this] { stepRig(-1); };
+    addAndMakeVisible(mPrevRig);
+
+    mNextRig.setTooltip("Next rig");
+    mNextRig.onClick = [this] { stepRig(1); };
+    addAndMakeVisible(mNextRig);
+
+    mSaveButton.setTooltip("Save this rig");
+    mSaveButton.onClick = [this] { saveRig(false); };
+    addAndMakeVisible(mSaveButton);
+
+    // Snapshots sit right under the header: scenes are a performance control.
+    mSnapshots.openPanel = [this](std::unique_ptr<juce::Component> panel, juce::String title,
+                                  int width, int height) {
+        openUtilityWindow(std::move(title), BlockCategory::utility, std::move(panel));
+        if (!mWindows.empty())
+            mWindows.back()->setSize(width, height + BlockWindow::kTitleBarHeight);
+    };
+    mSnapshots.onBankChanged = [this] { mDirtyCheckCountdown = 0; };
+    mSnapshots.onTunerRecalled = [this](bool shouldBeOpen) { showTuner(shouldBeOpen); };
+    addAndMakeVisible(mSnapshots);
 
     addAndMakeVisible(mLane);
 
@@ -1088,8 +1091,27 @@ void MainView::layOutWindows()
     mWindowLayer.repaint();
 }
 
+void MainView::mouseUp(const juce::MouseEvent& event)
+{
+    if (event.eventComponent == &mTitle && onHomeRequested)
+        onHomeRequested();
+}
+
 void MainView::timerCallback()
 {
+    // Serializing the whole rig means asking every plug-in for its chunk, so the
+    // dirty check runs on a slow cadence rather than every tick.
+    if (mCurrentRigFile != juce::File{} && --mDirtyCheckCountdown <= 0)
+    {
+        mDirtyCheckCountdown = 20; // 5 s at 4 Hz
+
+        const bool wasDirty = mDirty;
+        mDirty = rigstate::toValueTree(mProcessor).toXmlString() != mSavedStateXml;
+
+        if (mDirty != wasDirty)
+            refreshHeader();
+    }
+
     refreshHeader();
 }
 
@@ -1098,7 +1120,7 @@ void MainView::refreshHeader()
     const bool muted = mProcessor.isMuted();
     // Naming the action rather than the state: "MUTED" reads as a status label,
     // and people sat waiting for sound that was never going to come.
-    mMuteButton.setButtonText(muted ? "MUTED - CLICK TO PLAY" : "LIVE - CLICK TO MUTE");
+    mMuteButton.setButtonText(muted ? "MUTED" : "LIVE");
     mMuteButton.setColour(juce::TextButton::buttonColourId,
                           muted ? theme::colours::bad.withAlpha(0.9f) : theme::colours::good.withAlpha(0.7f));
 
@@ -1106,21 +1128,25 @@ void MainView::refreshHeader()
     if (muted)
         mMuteBanner.toFront(false);
 
-    const int count = mProcessor.getCatalog().getKnownPluginList().getNumTypes();
+    const auto rigName = mCurrentRigFile != juce::File{} ? mCurrentRigFile.getFileNameWithoutExtension()
+                                                         : (mDeviceManager != nullptr ? juce::String("No rig")
+                                                                                      : juce::String("DAW session"));
+    mRigName.set(rigName, mDirty);
+    mSaveButton.setEnabled(mDirty || mCurrentRigFile == juce::File{});
+}
 
-    if (count == 0)
-    {
-        mPluginCountButton.setButtonText("Scan plug-ins");
-        mPluginCountButton.setColour(juce::TextButton::buttonColourId, theme::colours::accent.withAlpha(0.85f));
-        mPluginCountButton.setTooltip("No plug-ins found yet. Scanning takes a few minutes and only needs "
-                                     "doing once.");
-    }
-    else
-    {
-        mPluginCountButton.setButtonText(juce::String(count) + " plug-ins");
-        mPluginCountButton.setColour(juce::TextButton::buttonColourId, theme::colours::panelRaised);
-        mPluginCountButton.setTooltip("Click to rescan.");
-    }
+void MainView::RigNameButton::paint(juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+
+    g.setColour(theme::colours::panelRaised.withAlpha(0.6f));
+    g.fillRoundedRectangle(bounds.reduced(0.0f, 3.0f), theme::metrics::smallCornerRadius);
+
+    g.setColour(theme::colours::text);
+    g.setFont(juce::FontOptions(14.5f, juce::Font::bold));
+    // The asterisk is the universal "unsaved" mark; a tinted dot would need
+    // explaining, this does not.
+    g.drawText(mName + (mDirty ? " *" : ""), bounds, juce::Justification::centred, true);
 }
 
 void MainView::startScan()
@@ -1156,38 +1182,239 @@ void MainView::startScan()
 
 void MainView::rigWasRestored()
 {
+    mSnapshots.refresh();
     mLane.refresh();
     updatePanel();
     refreshHeader();
     resized();
 }
 
+
+void MainView::showTuner(bool shouldBeOpen)
+{
+    auto* existing = findWindowForBlock("tuner");
+
+    if (shouldBeOpen == (existing != nullptr))
+        return;
+
+    if (!shouldBeOpen)
+    {
+        closeWindow(existing);
+        return;
+    }
+
+    auto panel = std::make_unique<TunerPanel>(mProcessor);
+    openUtilityWindow("Tuner", BlockCategory::utility, std::move(panel));
+    mWindows.back()->blockUid = "tuner";
+    mWindows.back()->setSize(TunerPanel::kPreferredWidth,
+                             TunerPanel::kPreferredHeight + BlockWindow::kTitleBarHeight);
+}
+
+juce::File MainView::getRigsFolder()
+{
+    auto folder = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                      .getChildFile("BlockRig")
+                      .getChildFile("Rigs");
+    folder.createDirectory();
+    return folder;
+}
+
+juce::Array<juce::File> MainView::listRigs() const
+{
+    auto rigs = getRigsFolder().findChildFiles(juce::File::findFiles, false,
+                                               "*" + juce::String(rigfiles::kFileExtension));
+    rigs.sort();
+    return rigs;
+}
+
+void MainView::markSavedState()
+{
+    mSavedStateXml = rigstate::toValueTree(mProcessor).toXmlString();
+    mDirty = false;
+    refreshHeader();
+}
+
+/// Asks about unsaved changes before doing something that would lose them.
+void MainView::confirmThenSwitch(std::function<void()> proceed)
+{
+    if (!mDirty || mCurrentRigFile == juce::File{})
+    {
+        proceed();
+        return;
+    }
+
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle("Save \"" + mCurrentRigFile.getFileNameWithoutExtension() + "\"?")
+            .withMessage("This rig has unsaved changes.")
+            .withButton("Save")
+            .withButton("Don't save")
+            .withButton("Cancel")
+            .withAssociatedComponent(this),
+        [this, proceed](int result) {
+            if (result == 1) // Save
+            {
+                saveRig(false);
+                proceed();
+            }
+            else if (result == 2) // Don't save
+            {
+                proceed();
+            }
+        });
+}
+
+void MainView::stepRig(int direction)
+{
+    const auto rigs = listRigs();
+    if (rigs.isEmpty())
+        return;
+
+    int index = rigs.indexOf(mCurrentRigFile);
+    index = index < 0 ? 0 : (index + direction + rigs.size()) % rigs.size();
+
+    const auto target = rigs[index];
+    if (target == mCurrentRigFile)
+        return;
+
+    confirmThenSwitch([this, target] { loadRigFile(target); });
+}
+
+void MainView::loadRigFile(const juce::File& file)
+{
+    closeAllWindows();
+
+    rigfiles::load(mProcessor, file, [this, file](rigstate::RestoreResult result, juce::String error) {
+        mCurrentRigFile = file;
+        markSavedState();
+        rigWasRestored();
+        reportRestore(result, error);
+    });
+}
+
+void MainView::newRig()
+{
+    confirmThenSwitch([this] {
+        // A fresh rig starts as a real file immediately, so Save always has a
+        // destination and the arrows can reach it.
+        auto file = getRigsFolder().getChildFile("Untitled rig" + juce::String(rigfiles::kFileExtension));
+        file = file.getNonexistentSibling();
+
+        closeAllWindows();
+        mProcessor.notifyBlockRemoval({});
+        mProcessor.getChain().clear();
+        mProcessor.getSnapshots().getSnapshots().clear();
+        mProcessor.getSnapshots().activeIndex = -1;
+        mProcessor.getTransport().setBpm(120.0);
+        mProcessor.getTransport().setTimeSignature(4, 4);
+
+        juce::String error;
+        rigfiles::save(mProcessor, file, error);
+
+        mCurrentRigFile = file;
+        markSavedState();
+        rigWasRestored();
+        mSnapshots.refresh();
+    });
+}
+
 void MainView::showRigMenu()
 {
     juce::PopupMenu menu;
-    menu.addItem(1, "New rig");
-    menu.addSeparator();
-    menu.addItem(2, "Open rig...");
-    menu.addItem(3, "Save rig", mCurrentRigFile != juce::File{});
-    menu.addItem(4, "Save rig as...");
-    menu.addSeparator();
-    menu.addItem(juce::PopupMenu::Item("Rigs are saved to " + rigfiles::getDefaultDirectory().getFileName())
-                     .setEnabled(false));
+    const auto rigs = listRigs();
 
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mRigButton), [this](int choice) {
+    int id = 100;
+    for (const auto& rig : rigs)
+        menu.addItem(juce::PopupMenu::Item(rig.getFileNameWithoutExtension())
+                         .setID(id++)
+                         .setTicked(rig == mCurrentRigFile));
+
+    if (!rigs.isEmpty())
+        menu.addSeparator();
+
+    menu.addItem(1, "New rig");
+    menu.addItem(2, "Rename this rig...", mCurrentRigFile != juce::File{});
+    menu.addItem(3, "Delete this rig...", mCurrentRigFile != juce::File{});
+    menu.addSeparator();
+    menu.addItem(4, "Import rig file...");
+    menu.addItem(5, "Show rigs folder");
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mRigName),
+                       [this, rigs](int choice) {
+        if (choice >= 100)
+        {
+            const auto target = rigs[choice - 100];
+            if (target != mCurrentRigFile)
+                confirmThenSwitch([this, target] { loadRigFile(target); });
+            return;
+        }
+
         switch (choice)
         {
-            case 1:
-                mProcessor.getChain().clear();
-                mCurrentRigFile = juce::File{};
-                mRigName.setText("Untitled rig", juce::dontSendNotification);
-                mLane.refresh();
-                updatePanel();
-                resized();
+            case 1: newRig(); break;
+            case 2:
+            {
+                auto window = std::make_shared<juce::AlertWindow>("Rename rig", "",
+                                                                  juce::MessageBoxIconType::NoIcon, this);
+                window->addTextEditor("name", mCurrentRigFile.getFileNameWithoutExtension());
+                window->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
+                window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+                window->enterModalState(true, juce::ModalCallbackFunction::create([this, window](int result) {
+                    const auto text = juce::File::createLegalFileName(
+                        window->getTextEditorContents("name").trim());
+
+                    if (result != 1 || text.isEmpty())
+                        return;
+
+                    auto target = getRigsFolder().getChildFile(
+                        text + juce::String(rigfiles::kFileExtension));
+
+                    if (target != mCurrentRigFile && !target.existsAsFile()
+                        && mCurrentRigFile.moveFileTo(target))
+                    {
+                        mCurrentRigFile = target;
+                        refreshHeader();
+                    }
+                }));
                 break;
-            case 2: openRig(); break;
-            case 3: saveRig(false); break;
-            case 4: saveRig(true); break;
+            }
+            case 3:
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions()
+                        .withIconType(juce::MessageBoxIconType::WarningIcon)
+                        .withTitle("Delete \"" + mCurrentRigFile.getFileNameWithoutExtension() + "\"?")
+                        .withMessage("The rig file moves to the Trash.")
+                        .withButton("Delete")
+                        .withButton("Cancel")
+                        .withAssociatedComponent(this),
+                    [this](int result) {
+                        if (result != 1)
+                            return;
+
+                        mCurrentRigFile.moveToTrash();
+                        mCurrentRigFile = juce::File{};
+
+                        // Land on another rig if there is one, or on empty.
+                        const auto remaining = listRigs();
+                        if (!remaining.isEmpty())
+                        {
+                            loadRigFile(remaining.getFirst());
+                        }
+                        else
+                        {
+                            closeAllWindows();
+                            mProcessor.notifyBlockRemoval({});
+                            mProcessor.getChain().clear();
+                            mProcessor.getSnapshots().getSnapshots().clear();
+                            rigWasRestored();
+                            markSavedState();
+                        }
+                    });
+                break;
+            case 4: openRig(); break;
+            case 5: getRigsFolder().revealToUser(); break;
             default: break;
         }
     });
@@ -1199,7 +1426,9 @@ void MainView::saveRig(bool forceChooser)
     {
         juce::String error;
 
-        if (!rigfiles::save(mProcessor, mCurrentRigFile, error))
+        if (rigfiles::save(mProcessor, mCurrentRigFile, error))
+            markSavedState();
+        else
             juce::NativeMessageBox::showAsync(juce::MessageBoxOptions()
                                                   .withIconType(juce::MessageBoxIconType::WarningIcon)
                                                   .withTitle("Could not save rig")
@@ -1209,7 +1438,7 @@ void MainView::saveRig(bool forceChooser)
         return;
     }
 
-    mFileChooser = std::make_unique<juce::FileChooser>("Save rig", rigfiles::getDefaultDirectory(),
+    mFileChooser = std::make_unique<juce::FileChooser>("Save rig", getRigsFolder(),
                                                       rigfiles::kFileWildcard);
 
     mFileChooser->launchAsync(juce::FileBrowserComponent::saveMode
@@ -1225,8 +1454,7 @@ void MainView::saveRig(bool forceChooser)
                                   if (rigfiles::save(mProcessor, file, error))
                                   {
                                       mCurrentRigFile = file.withFileExtension(rigfiles::kFileExtension);
-                                      mRigName.setText(mCurrentRigFile.getFileNameWithoutExtension(),
-                                                       juce::dontSendNotification);
+                                      markSavedState();
                                   }
                                   else
                                   {
@@ -1243,7 +1471,7 @@ void MainView::saveRig(bool forceChooser)
 
 void MainView::openRig()
 {
-    mFileChooser = std::make_unique<juce::FileChooser>("Open rig", rigfiles::getDefaultDirectory(),
+    mFileChooser = std::make_unique<juce::FileChooser>("Import rig", getRigsFolder(),
                                                       rigfiles::kFileWildcard);
 
     mFileChooser->launchAsync(juce::FileBrowserComponent::openMode
@@ -1253,21 +1481,19 @@ void MainView::openRig()
                                   if (!file.existsAsFile())
                                       return;
 
-                                  rigfiles::load(mProcessor, file,
-                                                 [this, file](rigstate::RestoreResult result,
-                                                              juce::String error) {
-                                                     if (error.isEmpty())
-                                                     {
-                                                         mCurrentRigFile = file;
-                                                         mRigName.setText(file.getFileNameWithoutExtension(),
-                                                                          juce::dontSendNotification);
-                                                     }
+                                  // A rig opened from outside is copied into the
+                                  // rigs folder, so the arrows and the menu see
+                                  // it from then on.
+                                  auto target = file;
 
-                                                     mLane.refresh();
-                                                     updatePanel();
-                                                     resized();
-                                                     reportRestore(result, error);
-                                                 });
+                                  if (!file.isAChildOf(getRigsFolder()))
+                                  {
+                                      target = getRigsFolder().getChildFile(file.getFileName())
+                                                   .getNonexistentSibling();
+                                      file.copyFileTo(target);
+                                  }
+
+                                  confirmThenSwitch([this, target] { loadRigFile(target); });
                               });
 }
 
@@ -1400,24 +1626,31 @@ void MainView::resized()
     auto area = getLocalBounds();
 
     auto header = area.removeFromTop(theme::metrics::headerHeight).reduced(theme::metrics::padding, 0);
-    mTitle.setBounds(header.removeFromLeft(104).withSizeKeepingCentre(104, 24));
-    mRigButton.setBounds(header.removeFromLeft(52).withSizeKeepingCentre(52, 26));
-    header.removeFromLeft(6);
-    mRigName.setBounds(header.removeFromLeft(130).withSizeKeepingCentre(130, 24));
+
+    // Left: the kill switch, the wordmark, and the clock.
+    mMuteButton.setBounds(header.removeFromLeft(76).withSizeKeepingCentre(76, 30));
     header.removeFromLeft(theme::metrics::gap);
+    mTitle.setBounds(header.removeFromLeft(112).withSizeKeepingCentre(112, 24));
+    header.removeFromLeft(theme::metrics::gap);
+    mTransportBar.setBounds(header.removeFromLeft(216).withSizeKeepingCentre(216, 40));
 
-    mMuteButton.setBounds(header.removeFromLeft(178).withSizeKeepingCentre(178, 28));
+    // Right: watch, tune, save, configure.
+    mSettingsButton.setBounds(header.removeFromRight(80).withSizeKeepingCentre(80, 28));
+    header.removeFromRight(theme::metrics::gap);
+    mSaveButton.setBounds(header.removeFromRight(58).withSizeKeepingCentre(58, 28));
+    header.removeFromRight(theme::metrics::gap);
+    mTunerButton.setBounds(header.removeFromRight(64).withSizeKeepingCentre(64, 28));
+    header.removeFromRight(theme::metrics::gap);
+    mHeaderMeters.setBounds(header.removeFromRight(176).withSizeKeepingCentre(176, 46));
+    header.removeFromRight(theme::metrics::gap);
 
-    mSettingsButton.setBounds(header.removeFromRight(88).withSizeKeepingCentre(88, 26));
-    header.removeFromRight(theme::metrics::gap);
-    mTunerButton.setBounds(header.removeFromRight(72).withSizeKeepingCentre(72, 26));
-    header.removeFromRight(theme::metrics::gap);
-    mPluginCountButton.setBounds(header.removeFromRight(110).withSizeKeepingCentre(110, 26));
-    header.removeFromRight(theme::metrics::gap);
-    mHeaderMeters.setBounds(header.removeFromRight(170).withSizeKeepingCentre(170, 42));
-    header.removeFromRight(theme::metrics::gap);
-    // Tempo belongs at the top, next to the other things you set rather than watch.
-    mTransportBar.setBounds(header.removeFromRight(210).withSizeKeepingCentre(210, 38));
+    // Centre: which rig this is, and the way to the next one.
+    auto centre = header.withSizeKeepingCentre(juce::jmin(header.getWidth(), 320), 30);
+    mPrevRig.setBounds(centre.removeFromLeft(30));
+    mNextRig.setBounds(centre.removeFromRight(30));
+    mRigName.setBounds(centre.reduced(4, 0));
+
+    mSnapshots.setBounds(area.removeFromTop(SnapshotStrip::kHeight));
 
     area.removeFromTop(theme::metrics::gap);
     area = area.reduced(theme::metrics::padding, 0);
@@ -1441,5 +1674,6 @@ void MainView::resized()
 
     layOutWindows();
 }
+
 
 } // namespace blockrig

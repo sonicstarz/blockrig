@@ -101,8 +101,19 @@ void BlockTile::paint(juce::Graphics& g)
     g.setColour(theme::colours::panelRaised);
     g.fillRoundedRectangle(square, theme::metrics::cornerRadius);
 
-    g.setColour(mSelected ? theme::colours::accent : tint.withAlpha(mBypassed ? 0.45f : 0.85f));
-    g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 2.4f : 1.6f);
+    // Engaged wears a thick coloured outline; bypassed loses it entirely. The
+    // outline IS the on-light - engaged versus bypassed has to read from across
+    // the room, not from a strikethrough you lean in for.
+    if (mBypassed)
+    {
+        g.setColour(theme::colours::outlineStrong.withAlpha(mSelected ? 0.9f : 0.55f));
+        g.drawRoundedRectangle(square, theme::metrics::cornerRadius, 1.2f);
+    }
+    else
+    {
+        g.setColour(mSelected ? theme::colours::accent : tint);
+        g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 3.4f : 2.8f);
+    }
 
     // Line-art glyph for the category: a rig should be readable by shape before
     // any of the names are read.

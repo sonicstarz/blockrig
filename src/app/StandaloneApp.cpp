@@ -9,6 +9,7 @@
 #include "host/PluginCatalog.h"
 #include "host/PluginScannerWorker.h"
 #include "state/RigFiles.h"
+#include "ui/AppShell.h"
 #include "ui/MainView.h"
 
 namespace blockrig
@@ -84,6 +85,7 @@ public:
         }
 
         mProcessor = std::make_unique<BlockRigProcessor>();
+        mProcessor->setFollowsHostTransport(false); // there is no host out here
         mProcessor->getCatalog().setStorageDirectory(getStorageDirectory());
         mProcessor->getCatalog().loadFromStorage();
 
@@ -110,11 +112,10 @@ public:
         };
 
         mMainWindow = std::make_unique<MainWindow>(getApplicationName(), *mProcessor, mDeviceManager);
+        mMainWindow->getShell().beginBoot();
 
-        restoreLastSession();
-
-        // Periodic save as well as save-on-quit, so a crash costs at most half a
-        // minute of work rather than the whole rig.
+        // Crash insurance only now: rigs are explicit files the user saves. This
+        // keeps at most half a minute of unsaved work recoverable from disk.
         mAutoSave = std::make_unique<AutoSave>(*mProcessor, getSessionFile());
     }
 
@@ -151,7 +152,14 @@ public:
         mScannerWorker = nullptr;
     }
 
-    void systemRequestedQuit() override { quit(); }
+    void systemRequestedQuit() override
+    {
+        // The rig screen may have unsaved changes; it gets to ask first.
+        if (mMainWindow != nullptr)
+            mMainWindow->getShell().requestQuit([] { juce::JUCEApplication::getInstance()->quit(); });
+        else
+            quit();
+    }
 
 private:
     /// Somewhere both the app and a DAW-sandboxed plug-in instance can read.
@@ -165,8 +173,8 @@ private:
     static juce::File getSettingsFile() { return getStorageDirectory().getChildFile(kSettingsFileName); }
     static juce::File getSessionFile() { return getStorageDirectory().getChildFile(kSessionFileName); }
 
-    /// Puts back whatever was loaded when the app last closed. Rebuilding a rig
-    /// from scratch every launch is the fastest way to make a tool unusable.
+    /// Kept for crash recovery: LastSession.blockrig can be imported from the
+    /// rig menu. No longer auto-restored - the home screen owns what opens.
     void restoreLastSession()
     {
         const auto session = getSessionFile();
@@ -361,7 +369,9 @@ private:
 
             const auto probe = mProcessor.getWidthProbe();
 
-            mFile.appendText("levels: in " + juce::String(mPeakIn, 5) + "  out "
+            mFile.appendText("bpm " + juce::String(mProcessor.getTransport().getBpm(), 2)
+                             + (mProcessor.getTransport().isFollowingHost() ? " (host)" : "")
+                             + "  levels: in " + juce::String(mPeakIn, 5) + "  out "
                              + juce::String(mPeakOut, 5) + "  L-R "
                              + juce::String(mProcessor.getStereoDifference(), 5) + "  muted "
                              + juce::String(mProcessor.isMuted() ? "yes" : "no") + "  processBlocks "
@@ -919,12 +929,14 @@ private:
             : juce::DocumentWindow(name, juce::Colour(0xff101216), juce::DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar(true);
-            setContentOwned(new MainView(processor, &deviceManager), true);
+            setContentOwned(new AppShell(processor, &deviceManager), true);
             setResizable(true, false);
-            setResizeLimits(900, 520, 4000, 2400);
+            setResizeLimits(1000, 600, 4200, 2600);
             centreWithSize(getWidth(), getHeight());
             setVisible(true);
         }
+
+        AppShell& getShell() { return *static_cast<AppShell*>(getContentComponent()); }
 
         void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 

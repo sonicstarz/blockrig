@@ -1,0 +1,436 @@
+#include "ui/SnapshotStrip.h"
+
+#include "ui/BlockWindow.h"
+#include "ui/Theme.h"
+
+namespace blockrig
+{
+
+//==============================================================================
+/// One snapshot chip. Drawn, not a TextButton, so active/edit states can look
+/// like part of the strip rather than stock buttons.
+class SnapshotStrip::Chip final : public juce::Component
+{
+public:
+    Chip(juce::String name, int index)
+        : mName(std::move(name))
+        , mIndex(index)
+    {
+    }
+
+    void setStates(bool active, bool editMode)
+    {
+        mActive = active;
+        mEditMode = editMode;
+        repaint();
+    }
+
+    int getIdealWidth() const
+    {
+        return juce::jlimit(64, 150, 26 + juce::GlyphArrangement::getStringWidthInt(
+                                              juce::FontOptions(12.5f), mName));
+    }
+
+    std::function<void(int)> onClick, onMenu;
+
+    void mouseUp(const juce::MouseEvent& event) override
+    {
+        if (!contains(event.getPosition()))
+            return;
+
+        if (event.mods.isPopupMenu())
+        {
+            if (onMenu)
+                onMenu(mIndex);
+        }
+        else if (onClick)
+        {
+            onClick(mIndex);
+        }
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().toFloat().reduced(1.0f, 4.0f);
+
+        const auto fill = mActive ? theme::colours::accent.withAlpha(0.22f) : theme::colours::panelRaised;
+        g.setColour(fill);
+        g.fillRoundedRectangle(bounds, theme::metrics::smallCornerRadius);
+
+        // Edit mode gets a dashed border: these chips are now targets, not
+        // triggers, and they should look different before the click.
+        if (mEditMode)
+        {
+            juce::Path outline;
+            outline.addRoundedRectangle(bounds, theme::metrics::smallCornerRadius);
+            const float dashes[] = {4.0f, 3.0f};
+            juce::PathStrokeType(1.4f).createDashedStroke(outline, outline, dashes, 2);
+            g.setColour(theme::colours::warn);
+            g.fillPath(outline);
+        }
+        else
+        {
+            g.setColour(mActive ? theme::colours::accent : theme::colours::outlineStrong);
+            g.drawRoundedRectangle(bounds, theme::metrics::smallCornerRadius, mActive ? 1.6f : 1.0f);
+        }
+
+        g.setColour(mActive ? theme::colours::text : theme::colours::textDim);
+        g.setFont(juce::FontOptions(12.5f, mActive ? juce::Font::bold : juce::Font::plain));
+        g.drawText(mName, bounds.reduced(6.0f, 0.0f), juce::Justification::centred, true);
+    }
+
+private:
+    juce::String mName;
+    int mIndex;
+    bool mActive = false;
+    bool mEditMode = false;
+};
+
+//==============================================================================
+/// The "new snapshot" panel: a name, and exactly what this snapshot saves.
+///
+/// The safes list defaults to everything a snapshot CAN hold - every block's
+/// parameters (for the NAM that includes the loaded capture), the tempo, and
+/// the tuner. What it can never hold is the rig's structure: adding, removing
+/// or reordering blocks belongs to rigs, not scenes.
+class SnapshotStrip::AddPanel final : public juce::Component
+{
+public:
+    AddPanel(BlockRigProcessor& processor, std::function<void()> onSaved)
+        : mProcessor(processor)
+        , mOnSaved(std::move(onSaved))
+    {
+        mNameLabel.setText("NAME", juce::dontSendNotification);
+        mNameLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+        mNameLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        addAndMakeVisible(mNameLabel);
+
+        mName.setText("Snapshot " + juce::String(static_cast<int>(
+                          mProcessor.getSnapshots().getSnapshots().size() + 1)));
+        mName.setSelectAllWhenFocused(true);
+        addAndMakeVisible(mName);
+
+        mSafesLabel.setText("SAVED IN THIS SNAPSHOT", juce::dontSendNotification);
+        mSafesLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+        mSafesLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        addAndMakeVisible(mSafesLabel);
+
+        // Everything defaults on. Unticking is the advanced move.
+        for (auto* block : mProcessor.getChain().getBlocks())
+        {
+            auto toggle = std::make_unique<juce::ToggleButton>(block->getDisplayName());
+            toggle->setToggleState(true, juce::dontSendNotification);
+            toggle->getProperties().set("uid", block->getUid());
+            mHolder.addAndMakeVisible(*toggle);
+            mBlockToggles.push_back(std::move(toggle));
+        }
+
+        mTempoToggle.setToggleState(true, juce::dontSendNotification);
+        mHolder.addAndMakeVisible(mTempoToggle);
+        mTunerToggle.setToggleState(true, juce::dontSendNotification);
+        mHolder.addAndMakeVisible(mTunerToggle);
+
+        mViewport.setViewedComponent(&mHolder, false);
+        mViewport.setScrollBarsShown(true, false);
+        addAndMakeVisible(mViewport);
+
+        mSave.onClick = [this] { save(); };
+        addAndMakeVisible(mSave);
+
+        setSize(360, 200 + juce::jmin(5, static_cast<int>(mBlockToggles.size())) * 26);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(theme::colours::background); }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(theme::metrics::gap);
+
+        mNameLabel.setBounds(area.removeFromTop(14));
+        mName.setBounds(area.removeFromTop(28));
+        area.removeFromTop(10);
+        mSafesLabel.setBounds(area.removeFromTop(14));
+
+        auto buttons = area.removeFromBottom(34);
+        mSave.setBounds(buttons.removeFromRight(120).reduced(0, 3));
+
+        area.removeFromBottom(4);
+        mViewport.setBounds(area);
+
+        const int rowHeight = 26;
+        mHolder.setSize(mViewport.getMaximumVisibleWidth(),
+                        rowHeight * (static_cast<int>(mBlockToggles.size()) + 2));
+
+        int y = 0;
+        for (auto& toggle : mBlockToggles)
+        {
+            toggle->setBounds(0, y, mHolder.getWidth(), rowHeight);
+            y += rowHeight;
+        }
+        mTempoToggle.setBounds(0, y, mHolder.getWidth(), rowHeight);
+        mTunerToggle.setBounds(0, y + rowHeight, mHolder.getWidth(), rowHeight);
+    }
+
+private:
+    void save()
+    {
+        juce::StringArray uids;
+        for (const auto& toggle : mBlockToggles)
+            if (toggle->getToggleState())
+                uids.add(toggle->getProperties()["uid"].toString());
+
+        auto name = mName.getText().trim();
+        if (name.isEmpty())
+            name = "Snapshot";
+
+        auto& bank = mProcessor.getSnapshots();
+        bank.getSnapshots().push_back(snapshots::Bank::capture(
+            mProcessor, name, uids, mTempoToggle.getToggleState(), mTunerToggle.getToggleState()));
+        bank.activeIndex = static_cast<int>(bank.getSnapshots().size()) - 1;
+
+        if (mOnSaved)
+            mOnSaved();
+
+        // Hosted inside a BlockWindow; its close callback tears us down.
+        if (auto* window = findParentComponentOfClass<BlockWindow>())
+            if (window->onClose)
+                window->onClose();
+    }
+
+    BlockRigProcessor& mProcessor;
+    std::function<void()> mOnSaved;
+
+    juce::Label mNameLabel, mSafesLabel;
+    juce::TextEditor mName;
+    juce::Viewport mViewport;
+    juce::Component mHolder;
+    std::vector<std::unique_ptr<juce::ToggleButton>> mBlockToggles;
+    juce::ToggleButton mTempoToggle{"Tempo & time signature"};
+    juce::ToggleButton mTunerToggle{"Tuner"};
+    juce::TextButton mSave{"Save snapshot"};
+};
+
+//==============================================================================
+SnapshotStrip::SnapshotStrip(BlockRigProcessor& processor)
+    : mProcessor(processor)
+{
+    mAddButton.setTooltip("Save the rig's current settings as a snapshot");
+    mAddButton.onClick = [this] { showAddPanel(); };
+    addAndMakeVisible(mAddButton);
+
+    mEditToggle.setClickingTogglesState(true);
+    mEditToggle.setTooltip("Edit mode: clicking a snapshot saves the current settings into it "
+                           "instead of applying it.");
+    mEditToggle.onClick = [this] {
+        mEditMode = mEditToggle.getToggleState();
+        refresh();
+    };
+    addAndMakeVisible(mEditToggle);
+
+    rebuildChips();
+}
+
+SnapshotStrip::~SnapshotStrip() = default;
+
+void SnapshotStrip::refresh()
+{
+    rebuildChips();
+}
+
+void SnapshotStrip::rebuildChips()
+{
+    mChips.clear();
+
+    const auto& bank = mProcessor.getSnapshots();
+    int index = 0;
+
+    for (const auto& snapshot : bank.getSnapshots())
+    {
+        auto chip = std::make_unique<Chip>(snapshot.name, index);
+        chip->setStates(index == bank.activeIndex, mEditMode);
+        chip->onClick = [this](int chipIndex) { chipClicked(chipIndex); };
+        chip->onMenu = [this](int chipIndex) { showChipMenu(chipIndex); };
+        addAndMakeVisible(*chip);
+        mChips.push_back(std::move(chip));
+        ++index;
+    }
+
+    resized();
+    repaint();
+}
+
+void SnapshotStrip::chipClicked(int index)
+{
+    if (mEditMode)
+        overwriteSnapshot(index);
+    else
+        applySnapshot(index);
+}
+
+void SnapshotStrip::applySnapshot(int index)
+{
+    auto& bank = mProcessor.getSnapshots();
+    if (index < 0 || index >= static_cast<int>(bank.getSnapshots().size()))
+        return;
+
+    const auto& snapshot = bank.getSnapshots()[static_cast<size_t>(index)];
+    snapshots::Bank::apply(mProcessor, snapshot);
+    bank.activeIndex = index;
+
+    if (snapshot.includeTuner && onTunerRecalled)
+        onTunerRecalled(snapshot.tunerActive);
+
+    if (onBankChanged)
+        onBankChanged();
+
+    refresh();
+}
+
+void SnapshotStrip::overwriteSnapshot(int index)
+{
+    auto& bank = mProcessor.getSnapshots();
+    if (index < 0 || index >= static_cast<int>(bank.getSnapshots().size()))
+        return;
+
+    const auto name = bank.getSnapshots()[static_cast<size_t>(index)].name;
+
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle("Save into \"" + name + "\"?")
+            .withMessage("The rig's current settings will replace what this snapshot holds.")
+            .withButton("Save")
+            .withButton("Cancel")
+            .withAssociatedComponent(this),
+        [this, index](int result) {
+            if (result != 1)
+                return;
+
+            auto& bank = mProcessor.getSnapshots();
+            if (index >= static_cast<int>(bank.getSnapshots().size()))
+                return;
+
+            auto& snapshot = bank.getSnapshots()[static_cast<size_t>(index)];
+
+            // Keep the snapshot's own choices: same name, same safes; only the
+            // captured values change.
+            juce::StringArray uids;
+            for (const auto& [uid, state] : snapshot.blockStates)
+                uids.add(uid);
+
+            auto refreshed = snapshots::Bank::capture(mProcessor, snapshot.name, uids,
+                                                      snapshot.includeTempo, snapshot.includeTuner);
+            snapshot = std::move(refreshed);
+            bank.activeIndex = index;
+
+            if (onBankChanged)
+                onBankChanged();
+
+            refresh();
+        });
+}
+
+void SnapshotStrip::showChipMenu(int index)
+{
+    juce::PopupMenu menu;
+    menu.addItem(1, "Rename...");
+    menu.addItem(2, "Delete");
+
+    menu.showMenuAsync(juce::PopupMenu::Options(), [this, index](int choice) {
+        auto& bank = mProcessor.getSnapshots();
+        if (index >= static_cast<int>(bank.getSnapshots().size()))
+            return;
+
+        if (choice == 1)
+        {
+            auto window = std::make_shared<juce::AlertWindow>(
+                "Rename snapshot", "", juce::MessageBoxIconType::NoIcon, this);
+            window->addTextEditor("name", bank.getSnapshots()[static_cast<size_t>(index)].name);
+            window->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+            window->enterModalState(true, juce::ModalCallbackFunction::create([this, index, window](int result) {
+                if (result == 1)
+                {
+                    auto& innerBank = mProcessor.getSnapshots();
+                    if (index < static_cast<int>(innerBank.getSnapshots().size()))
+                    {
+                        const auto text = window->getTextEditorContents("name").trim();
+                        if (text.isNotEmpty())
+                            innerBank.getSnapshots()[static_cast<size_t>(index)].name = text;
+                    }
+                    if (onBankChanged)
+                        onBankChanged();
+                    refresh();
+                }
+            }));
+        }
+        else if (choice == 2)
+        {
+            bank.getSnapshots().erase(bank.getSnapshots().begin() + index);
+            if (bank.activeIndex == index)
+                bank.activeIndex = -1;
+            else if (bank.activeIndex > index)
+                --bank.activeIndex;
+
+            if (onBankChanged)
+                onBankChanged();
+            refresh();
+        }
+    });
+}
+
+void SnapshotStrip::showAddPanel()
+{
+    if (!openPanel)
+        return;
+
+    auto panel = std::make_unique<AddPanel>(mProcessor, [this] {
+        if (onBankChanged)
+            onBankChanged();
+        refresh();
+    });
+
+    const auto width = panel->getWidth();
+    const auto height = panel->getHeight();
+    openPanel(std::move(panel), "New snapshot", width, height);
+}
+
+void SnapshotStrip::paint(juce::Graphics& g)
+{
+    g.setColour(theme::colours::panel.withAlpha(0.35f));
+    g.fillRect(getLocalBounds());
+
+    g.setColour(theme::colours::textFaint);
+    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+    g.drawText("SNAPSHOTS", getLocalBounds().removeFromLeft(74).reduced(theme::metrics::padding, 0),
+               juce::Justification::centredLeft, false);
+
+    if (mChips.empty())
+    {
+        g.setColour(theme::colours::textFaint.withAlpha(0.7f));
+        g.setFont(juce::FontOptions(11.5f));
+        g.drawText("none yet — press  +  to save the current settings as a scene",
+                   getLocalBounds().withTrimmedLeft(120), juce::Justification::centredLeft, false);
+    }
+}
+
+void SnapshotStrip::resized()
+{
+    auto area = getLocalBounds().reduced(theme::metrics::padding, 5);
+    area.removeFromLeft(66); // the SNAPSHOTS caption
+
+    mEditToggle.setBounds(area.removeFromRight(56).reduced(0, 2));
+    area.removeFromRight(6);
+
+    mAddButton.setBounds(area.removeFromLeft(30).reduced(0, 2));
+    area.removeFromLeft(6);
+
+    for (auto& chip : mChips)
+    {
+        chip->setBounds(area.removeFromLeft(chip->getIdealWidth()));
+        area.removeFromLeft(4);
+    }
+}
+
+} // namespace blockrig

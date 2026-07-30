@@ -11,6 +11,7 @@
 #include "ui/TransportBar.h"
 #include "state/RigFiles.h"
 #include "ui/LaneView.h"
+#include "ui/SnapshotStrip.h"
 #include "ui/BlockWindow.h"
 #include "ui/Theme.h"
 
@@ -36,9 +37,17 @@ public:
     /// Called after a rig is restored from disk, so the lane and panels catch up.
     void rigWasRestored();
 
+    /// Wired by the shell: clicking the wordmark goes back to the home screen.
+    std::function<void()> onHomeRequested;
+
+    static juce::File getRigsFolder();
+    void confirmThenSwitch(std::function<void()> proceed);
+    void loadRigFile(const juce::File& file);
+
 private:
     bool keyPressed(const juce::KeyPress&, juce::Component*) override;
     void timerCallback() override;
+    void mouseUp(const juce::MouseEvent&) override;
 
     void showSettings();
     void startScan();
@@ -46,6 +55,15 @@ private:
     void showRigMenu();
     void saveRig(bool forceChooser);
     void openRig();
+
+    /// Rig files management. The rigs folder is user-visible in Documents so
+    /// rigs can be backed up, shared, and renamed like any other files.
+    juce::Array<juce::File> listRigs() const;
+    void stepRig(int direction);
+    void newRig();
+    bool isDirty() const { return mDirty; }
+    void markSavedState();
+    void showTuner(bool shouldBeOpen);
     void reportRestore(const rigstate::RestoreResult& result, const juce::String& error);
     void updatePanel();
     void showIoPanel(EndBlock::Kind kind);
@@ -66,16 +84,48 @@ private:
     /// Global: mutes the rig and opens the tuner. Tuning happens mid-set, so it
     /// lives in the header rather than behind a menu.
     juce::TextButton mTunerButton{"Tuner"};
-    juce::TextButton mRigButton{"Rig"};
-    juce::Label mRigName;
+    juce::TextButton mSaveButton{"Save"};
+    juce::TextButton mPrevRig{"<"}, mNextRig{">"};
+
+    /// Centre of the header: the rig's name, asterisked while there are unsaved
+    /// changes. Clicking it opens the rig folder as a menu.
+    class RigNameButton final : public juce::Component
+    {
+    public:
+        void set(juce::String name, bool dirty)
+        {
+            mName = std::move(name);
+            mDirty = dirty;
+            repaint();
+        }
+
+        std::function<void()> onClick;
+
+        void mouseUp(const juce::MouseEvent& event) override
+        {
+            if (contains(event.getPosition()) && onClick)
+                onClick();
+        }
+
+        void paint(juce::Graphics& g) override;
+
+    private:
+        juce::String mName;
+        bool mDirty = false;
+    };
+
+    RigNameButton mRigName;
     juce::File mCurrentRigFile;
+    juce::String mSavedStateXml;
+    bool mDirty = false;
+    int mDirtyCheckCountdown = 0;
+
+    SnapshotStrip mSnapshots;
 
     /// Big and always reachable: an app that opens a live input into a live
     /// output needs an obvious kill switch, not a menu item.
     juce::TextButton mMuteButton;
 
-    /// Doubles as the call to action when no plug-ins have been scanned yet.
-    juce::TextButton mPluginCountButton;
 
     LaneView mLane;
 
