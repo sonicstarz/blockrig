@@ -113,10 +113,14 @@ void BlockRigProcessor::setMuted(bool shouldBeMuted)
     mMuteGain.setTargetValue(shouldBeMuted ? 0.0f : 1.0f);
 }
 
-void BlockRigProcessor::startTestTone()
+void BlockRigProcessor::startTestTone(TestToneSide side)
 {
     const auto sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
-    mTestToneSamplesLeft.store(static_cast<int>(sampleRate * 2.0), std::memory_order_relaxed);
+    const auto samples = static_cast<int>(sampleRate * (side == TestToneSide::alternating ? 4.0 : 2.0));
+
+    mTestToneSide.store(static_cast<int>(side), std::memory_order_relaxed);
+    mTestToneTotalSamples = samples;
+    mTestToneSamplesLeft.store(samples, std::memory_order_relaxed);
 }
 
 void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -209,13 +213,28 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         const auto increment = 2.0 * juce::MathConstants<double>::pi * 440.0 / sampleRate;
         const int toPlay = juce::jmin(numSamples, remaining);
 
+        const auto side = static_cast<TestToneSide>(mTestToneSide.load(std::memory_order_relaxed));
+        const int channels = juce::jmin(numOutputs, buffer.getNumChannels());
+
         for (int i = 0; i < toPlay; ++i)
         {
             const auto value = static_cast<float>(0.12 * std::sin(mTestTonePhase));
             mTestTonePhase += increment;
 
-            for (int channel = 0; channel < juce::jmin(numOutputs, buffer.getNumChannels()); ++channel)
-                buffer.getWritePointer(channel)[i] = value;
+            // Alternating swaps sides halfway, so one press answers "are both
+            // channels reaching me, and are they the right way round".
+            const bool secondHalf = mTestToneTotalSamples > 0
+                                 && (remaining - i) < mTestToneTotalSamples / 2;
+
+            for (int channel = 0; channel < channels; ++channel)
+            {
+                const bool audible = side == TestToneSide::both
+                                  || (side == TestToneSide::left && channel == 0)
+                                  || (side == TestToneSide::right && channel == 1)
+                                  || (side == TestToneSide::alternating && (channel == 0) != secondHalf);
+
+                buffer.getWritePointer(channel)[i] = audible ? value : 0.0f;
+            }
         }
 
         mTestToneSamplesLeft.store(remaining - toPlay, std::memory_order_relaxed);
@@ -289,8 +308,18 @@ void BlockRigProcessor::addBlock(const juce::PluginDescription& description, Blo
         });
 }
 
+void BlockRigProcessor::notifyBlockRemoval(const juce::String& uid)
+{
+    if (onBlockAboutToBeRemoved)
+        onBlockAboutToBeRemoved(uid);
+}
+
 void BlockRigProcessor::removeBlock(const juce::String& uid)
 {
+    // Before the plug-in dies, not after: its editor outlives it otherwise and
+    // its timer fires into freed memory.
+    notifyBlockRemoval(uid);
+
     mChain.removeBlock(uid);
     updateLatency();
 

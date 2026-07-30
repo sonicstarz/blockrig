@@ -197,6 +197,19 @@ public:
                                  "If you hear nothing, the problem is between this app and your speakers.");
             mTestTone.onClick = [this] { mProcessor.startTestTone(); };
             addAndMakeVisible(mTestTone);
+
+            // "Still mono" cannot be settled from inside the app: it measures its
+            // own output, not what reaches the speakers. A tone that is left-only
+            // for two seconds and right-only for two seconds settles it by ear.
+            mStereoTest.setButtonText("Left, then right");
+            mStereoTest.setTooltip("Two seconds of 440 Hz out of the left output, then two out of the "
+                                   "right, bypassing the chain and the mute. If you hear both in the "
+                                   "middle, the stereo image is being lost after this app - in the "
+                                   "interface, its mixer, or direct monitoring.");
+            mStereoTest.onClick = [this] {
+                mProcessor.startTestTone(BlockRigProcessor::TestToneSide::alternating);
+            };
+            addAndMakeVisible(mStereoTest);
         }
 
         updateDescription();
@@ -223,7 +236,9 @@ public:
         if (mKind == EndBlock::Kind::output)
         {
             controls.removeFromLeft(theme::metrics::gap);
-            mTestTone.setBounds(controls.removeFromLeft(120).withSizeKeepingCentre(120, 30));
+            mTestTone.setBounds(controls.removeFromLeft(104).withSizeKeepingCentre(104, 30));
+            controls.removeFromLeft(6);
+            mStereoTest.setBounds(controls.removeFromLeft(128).withSizeKeepingCentre(128, 30));
         }
 
         if (mKind == EndBlock::Kind::input)
@@ -291,7 +306,7 @@ private:
     juce::Slider mTrim;
     juce::ComboBox mMode;
     juce::TextButton mDeviceButton;
-    juce::TextButton mTestTone;
+    juce::TextButton mTestTone, mStereoTest;
 };
 
 /// Controls for a split stage: how the two sides recombine, and each side's own
@@ -760,6 +775,19 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mLane.onBlockActivated = [this](juce::String uid) { openBlockWindow(uid); };
     mLane.isBlockWindowOpen = [this](const juce::String& uid) { return findWindowForBlock(uid) != nullptr; };
 
+    // A plug-in's editor must be gone before the plug-in is: its timers keep
+    // running against the processor either way.
+    mProcessor.onBlockAboutToBeRemoved = [this](juce::String uid) {
+        if (uid.isEmpty())
+        {
+            closeAllWindows();
+            return;
+        }
+
+        if (auto* window = findWindowForBlock(uid))
+            closeWindow(window);
+    };
+
     mProcessor.onChainChanged = [this] {
         mLane.refresh();
         updatePanel();
@@ -779,6 +807,9 @@ MainView::~MainView()
     stopTimer();
     removeKeyListener(this);
     mProcessor.onChainChanged = nullptr;
+    mProcessor.onBlockAboutToBeRemoved = nullptr;
+    // Windows own hosted editors, so they must go before the chain does.
+    closeAllWindows();
     setLookAndFeel(nullptr);
 }
 
@@ -803,8 +834,6 @@ bool MainView::keyPressed(const juce::KeyPress& key, juce::Component*)
         const auto uid = mLane.getSelectedUid();
         if (uid.isNotEmpty())
         {
-            if (auto* window = findWindowForBlock(uid))
-                closeWindow(window);
             mProcessor.removeBlock(uid);
             return true;
         }

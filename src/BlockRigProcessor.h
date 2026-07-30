@@ -71,6 +71,17 @@ public:
     /// Called on the message thread whenever the lane changes.
     std::function<void()> onChainChanged;
 
+    /// Fired before a block's plug-in is destroyed, so anything holding its
+    /// editor can let go first. A plug-in's editor keeps timers running against
+    /// the processor, so destroying the processor underneath it crashes on the
+    /// next tick - which is what happened when a block was deleted from its menu.
+    /// An empty uid means the whole chain is going.
+    std::function<void(juce::String uid)> onBlockAboutToBeRemoved;
+
+    /// Announces a removal to whoever is holding editors. Called by the chain's
+    /// own teardown paths as well as by removeBlock().
+    void notifyBlockRemoval(const juce::String& uid);
+
     //==============================================================================
     // Input and output ends of the lane.
 
@@ -98,7 +109,18 @@ public:
     /// Plays a 440 Hz tone straight to the output for a couple of seconds,
     /// ignoring the chain and the mute. Answers "is anything reaching my
     /// speakers at all" without needing an instrument plugged in.
-    void startTestTone();
+    /// Which side a test tone should come out of. Left-only and right-only are
+    /// what tell "the rig is mono" apart from "the monitoring path is mono" -
+    /// the app can measure its own output but not what reaches the speakers.
+    enum class TestToneSide
+    {
+        both,
+        left,
+        right,
+        alternating
+    };
+
+    void startTestTone(TestToneSide side = TestToneSide::both);
     bool isTestTonePlaying() const { return mTestToneSamplesLeft.load(std::memory_order_relaxed) > 0; }
 
     /// How many times processBlock has run. Distinguishes "the audio callback
@@ -138,6 +160,8 @@ private:
 
     std::atomic<juce::int64> mProcessBlockCount{0};
     std::atomic<int> mTestToneSamplesLeft{0};
+    std::atomic<int> mTestToneSide{static_cast<int>(TestToneSide::both)};
+    int mTestToneTotalSamples = 0;
     double mTestTonePhase = 0.0;
 
     std::atomic<float> mInputLevel{0.0f};

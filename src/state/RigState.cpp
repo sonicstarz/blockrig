@@ -323,6 +323,8 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
         }
     }
 
+    // Every plug-in in the old chain is about to be destroyed.
+    processor.notifyBlockRemoval({});
     processor.getChain().clear();
 
     auto sequence = std::make_shared<SequentialRestore>(processor, std::move(saved), std::move(rowSettings),

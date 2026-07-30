@@ -75,6 +75,14 @@ public:
             return;
         }
 
+        // Measures the whole path - block, chain, processor - rather than a
+        // block in isolation, which is where a stereo image actually gets lost.
+        if (commandLine.contains("--chain-check"))
+        {
+            runChainCheck(commandLine.fromFirstOccurrenceOf("--chain-check", false, false).trim());
+            return;
+        }
+
         mProcessor = std::make_unique<BlockRigProcessor>();
         mProcessor->getCatalog().setStorageDirectory(getStorageDirectory());
         mProcessor->getCatalog().loadFromStorage();
@@ -340,6 +348,185 @@ private:
     /// Instantiates every catalogued plug-in matching `fragment` exactly as the
     /// chain would, and reports its negotiated channel layout and whether it
     /// actually produces a stereo image from a mono-identical input.
+    /// Pushes decorrelated stereo through the real processor and reports what
+    /// survives at each stage.
+    ///
+    /// --plugin-check exonerated every plug-in while the rig still came out mono,
+    /// which means the block was never the thing to measure. This runs the same
+    /// signal through BlockRigProcessor so the chain and the processor's own
+    /// input handling are in the measurement too.
+    void runChainCheck(const juce::String& fragment)
+    {
+        constexpr double sampleRate = 48000.0;
+        constexpr int blockSize = 512;
+
+        mProcessor = std::make_unique<BlockRigProcessor>();
+        mProcessor->getCatalog().setStorageDirectory(getStorageDirectory());
+        mProcessor->getCatalog().loadFromStorage();
+        mProcessor->setMuted(false);
+
+        const auto describe = [](const juce::AudioBuffer<float>& buffer) {
+            const int numSamples = buffer.getNumSamples();
+            double left = 0.0, right = 0.0, difference = 0.0;
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const auto l = buffer.getReadPointer(0)[i];
+                const auto r = buffer.getReadPointer(1)[i];
+                left += l * l;
+                right += r * r;
+                difference += std::abs(l - r);
+            }
+
+            return juce::String::formatted("L %.5f  R %.5f  L-R %.5f  %s",
+                                           std::sqrt(left / numSamples), std::sqrt(right / numSamples),
+                                           difference / numSamples,
+                                           difference / numSamples > 1.0e-5 ? "STEREO" : "MONO");
+        };
+
+        // "--chain-check session" measures the rig the user actually has, which
+        // is the only way to catch a collapse caused by one block among several.
+        if (fragment.equalsIgnoreCase("session"))
+        {
+            juce::String loadError;
+            bool finished = false;
+
+            rigfiles::load(*mProcessor, getSessionFile(),
+                           [&](rigstate::RestoreResult result, juce::String error) {
+                               loadError = error;
+                               if (!result.missingPlugins.isEmpty())
+                                   std::printf("Missing: %s\n",
+                                               result.missingPlugins.joinIntoString(", ").toRawUTF8());
+                               finished = true;
+                           });
+
+            for (int i = 0; i < 400 && !finished; ++i)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+
+            if (loadError.isNotEmpty())
+                std::printf("Could not load the session: %s\n", loadError.toRawUTF8());
+
+            for (auto* block : mProcessor->getChain().getBlocks())
+                std::printf("  %-30s %s\n", block->getDisplayName().toRawUTF8(),
+                            block->isMonoOnly() ? "MONO-ONLY - sums the stereo image away" : "stereo");
+
+            // Per-block, because "the rig is stereo" is not the same as knowing
+            // which block widens it and which one squashes it back down.
+            std::printf("\nWidth after each block, fed a hard-panned left-only signal:\n");
+
+            juce::AudioBuffer<float> probe(2, blockSize);
+            juce::MidiBuffer probeMidi;
+            const auto blocks = mProcessor->getChain().getBlocks();
+
+            for (auto* block : blocks)
+                block->prepare(sampleRate, blockSize);
+
+            for (int pass = 0; pass <= 120; ++pass)
+            {
+                for (int channel = 0; channel < 2; ++channel)
+                {
+                    auto* data = probe.getWritePointer(channel);
+                    for (int i = 0; i < blockSize; ++i)
+                        data[i] = channel == 1 ? 0.0f
+                                               : 0.25f * std::sin(0.07f * static_cast<float>(pass * blockSize + i));
+                }
+
+                const bool report = pass == 120;
+
+                if (report)
+                    std::printf("  %-30s %s\n", "(input)", describe(probe).toRawUTF8());
+
+                for (auto* block : blocks)
+                {
+                    probeMidi.clear();
+                    block->process(probe, probeMidi, blockSize / sampleRate);
+
+                    if (report)
+                        std::printf("  %-30s %s\n", block->getDisplayName().toRawUTF8(),
+                                    describe(probe).toRawUTF8());
+                }
+            }
+
+            std::printf("\n");
+        }
+        // Add the requested plug-in, if any, and wait for it to arrive.
+        else if (fragment.isNotEmpty())
+        {
+            const auto types = mProcessor->getCatalog().getKnownPluginList().getTypes();
+            bool requested = false;
+
+            for (const auto& description : types)
+            {
+                if (!description.name.containsIgnoreCase(fragment))
+                    continue;
+
+                std::printf("Adding %s\n", description.name.toRawUTF8());
+                mProcessor->addBlock(description, BlockPosition{0, 0, 0});
+                requested = true;
+                break;
+            }
+
+            if (!requested)
+                std::printf("Nothing in the catalogue matched \"%s\"\n", fragment.toRawUTF8());
+
+            // Instantiation is asynchronous, so let the message loop run.
+            for (int i = 0; i < 200 && mProcessor->getChain().getNumBlocks() == 0; ++i)
+            {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+            }
+        }
+
+        std::printf("Chain has %d block(s)\n\n", mProcessor->getChain().getNumBlocks());
+
+        mProcessor->setPlayConfigDetails(2, 2, sampleRate, blockSize);
+        mProcessor->prepareToPlay(sampleRate, blockSize);
+
+        // Hard-decorrelated input: left only. Anything that sums to mono halves
+        // it onto both sides, which is unmistakable in the numbers.
+        const auto fill = [](juce::AudioBuffer<float>& buffer, bool leftOnly, int pass) {
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                auto* data = buffer.getWritePointer(channel);
+
+                for (int i = 0; i < buffer.getNumSamples(); ++i)
+                {
+                    const auto phase = 0.07f * static_cast<float>(pass * buffer.getNumSamples() + i);
+                    data[i] = (leftOnly && channel == 1) ? 0.0f : 0.25f * std::sin(phase);
+                }
+            }
+        };
+
+        juce::AudioBuffer<float> buffer(2, blockSize);
+        juce::MidiBuffer midi;
+
+        for (const bool leftOnly : {true, false})
+        {
+            for (int pass = 0; pass < 60; ++pass)
+            {
+                fill(buffer, leftOnly, pass);
+                midi.clear();
+                mProcessor->processBlock(buffer, midi);
+            }
+
+            fill(buffer, leftOnly, 60);
+            const auto inputDescription = describe(buffer);
+            midi.clear();
+            mProcessor->processBlock(buffer, midi);
+
+            std::printf("%-22s in:  %s\n", leftOnly ? "left-only input" : "identical input",
+                        inputDescription.toRawUTF8());
+            std::printf("%-22s out: %s\n\n", "", describe(buffer).toRawUTF8());
+        }
+
+        std::printf("Input mode is %s\n",
+                    mProcessor->getInputMode() == BlockRigProcessor::InputMode::mono ? "MONO (sums to one channel"
+                                                                                      " and copies it to both)"
+                                                                                    : "stereo");
+
+        mProcessor->releaseResources();
+        juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
+    }
+
     void runPluginCheck(const juce::String& fragment)
     {
         PluginCatalog catalog;
