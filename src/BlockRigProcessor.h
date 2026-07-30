@@ -109,7 +109,12 @@ private:
     juce::SmoothedValue<float> mInputGain;
     juce::SmoothedValue<float> mOutputGain;
     juce::SmoothedValue<float> mMuteGain;
-    std::atomic<bool> mMuted{true};
+    /// Not muted by default. The standalone app mutes itself at startup, because
+    /// it is the one that opens a live input into a live output. Note that
+    /// wrapperType is Undefined there - the app builds this processor directly
+    /// rather than through a plug-in wrapper - so it cannot be used to tell the
+    /// two deployments apart.
+    std::atomic<bool> mMuted{false};
 
     std::atomic<float> mInputLevel{0.0f};
     std::atomic<float> mOutputLevel{0.0f};

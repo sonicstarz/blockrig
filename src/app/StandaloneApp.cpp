@@ -1,8 +1,11 @@
+#include <thread>
+
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "BlockRigProcessor.h"
+#include "host/PluginCatalog.h"
 #include "host/PluginScannerWorker.h"
 #include "ui/MainView.h"
 
@@ -44,9 +47,22 @@ public:
 
         mScannerWorker.reset();
 
+        // Headless scan, for setting the catalog up from a terminal and for
+        // testing the very relaunch path the UI depends on.
+        if (commandLine.contains("--scan"))
+        {
+            runHeadlessScan();
+            return;
+        }
+
         mProcessor = std::make_unique<BlockRigProcessor>();
         mProcessor->getCatalog().setStorageDirectory(getStorageDirectory());
         mProcessor->getCatalog().loadFromStorage();
+
+        // The app opens a live input into a live output, so start silent and let
+        // the user commit. (wrapperType cannot tell us we are the app: this
+        // processor is built directly, not through a plug-in wrapper.)
+        mProcessor->setMuted(true);
 
         setUpAudio();
 
@@ -55,6 +71,10 @@ public:
 
     void shutdown() override
     {
+        if (mScanThread.joinable())
+            mScanThread.join();
+
+        mCatalogForScan = nullptr;
         mMainWindow = nullptr;
 
         if (mProcessor != nullptr)
@@ -95,8 +115,73 @@ private:
         // demand two.
         mDeviceManager.initialise(2, 2, savedState.get(), true);
 
+        ensureAnInputIsEnabled();
+
         mPlayer.setProcessor(mProcessor.get());
         mDeviceManager.addAudioCallback(&mPlayer);
+    }
+
+    /// Scans on a background thread, printing progress, then quits. Same code
+    /// path the UI uses, so if this works the button works.
+    void runHeadlessScan()
+    {
+        mCatalogForScan = std::make_unique<PluginCatalog>();
+        mCatalogForScan->setStorageDirectory(getStorageDirectory());
+        mCatalogForScan->loadFromStorage();
+
+        mScanThread = std::thread([this] {
+            int lastReported = 0;
+
+            const auto summary = mCatalogForScan->scanAllFormats(
+                [&lastReported](const PluginCatalog::ScanProgress& progress) {
+                    if (progress.scanned - lastReported >= 20 || progress.scanned == progress.total)
+                    {
+                        lastReported = progress.scanned;
+                        std::printf("%d/%d scanned, %d found  (%s)\n", progress.scanned, progress.total,
+                                    progress.found, progress.currentPluginName.toRawUTF8());
+                        std::fflush(stdout);
+                    }
+                });
+
+            std::printf("\nDone: %d scanned, %d found, %d denylisted, %d timed out\n", summary.scanned,
+                        summary.found, summary.denylisted, summary.timedOut);
+
+            for (const auto& name : summary.denylistedNames)
+                std::printf("  skipped: %s\n", name.toRawUTF8());
+
+            std::fflush(stdout);
+            juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
+        });
+    }
+
+    /// A multi-channel interface can come up with every input channel disabled,
+    /// which looks exactly like a broken app: signal reaches the interface but
+    /// never reaches us. If nothing is enabled, turn the first input on.
+    void ensureAnInputIsEnabled()
+    {
+        auto* device = mDeviceManager.getCurrentAudioDevice();
+        if (device == nullptr)
+            return;
+
+        auto setup = mDeviceManager.getAudioDeviceSetup();
+
+        if (!setup.inputChannels.isZero())
+            return;
+
+        const int available = device->getInputChannelNames().size();
+        if (available <= 0)
+            return;
+
+        setup.useDefaultInputChannels = false;
+        setup.inputChannels.clear();
+        setup.inputChannels.setBit(0);
+        if (available > 1)
+            setup.inputChannels.setBit(1);
+
+        const auto error = mDeviceManager.setAudioDeviceSetup(setup, true);
+
+        if (error.isNotEmpty())
+            juce::Logger::writeToLog("Could not enable an input channel: " + error);
     }
 
     void saveDeviceState()
@@ -134,6 +219,8 @@ private:
     };
 
     std::unique_ptr<PluginScannerWorker> mScannerWorker;
+    std::unique_ptr<PluginCatalog> mCatalogForScan;
+    std::thread mScanThread;
     std::unique_ptr<BlockRigProcessor> mProcessor;
     juce::AudioDeviceManager mDeviceManager;
     juce::AudioProcessorPlayer mPlayer;

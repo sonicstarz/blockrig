@@ -44,11 +44,6 @@ BlockRigProcessor::BlockRigProcessor()
 {
     mCatalog.loadFromStorage();
     mLatencyPoller = std::make_unique<LatencyPoller>(*this);
-
-    // Start muted only in the standalone app, where we open a live input into a
-    // live output the moment the window appears. In a DAW the host controls
-    // routing and a silent plug-in just looks broken.
-    mMuted.store(wrapperType == wrapperType_Standalone, std::memory_order_relaxed);
 }
 
 BlockRigProcessor::~BlockRigProcessor()

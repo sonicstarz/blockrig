@@ -142,12 +142,77 @@ private:
         if (mDeviceManager == nullptr)
             return;
 
-        auto selector = std::make_unique<juce::AudioDeviceSelectorComponent>(*mDeviceManager, 0, 2, 0, 2, false,
-                                                                            false, true, false);
-        selector->setSize(460, 320);
+        // The stock selector applies every change the instant it is made, which
+        // is alarming when you are choosing between 34 channels on a live rig.
+        // Wrap it so nothing sticks until Apply, and Revert puts it all back.
+        class AudioSettingsPanel final : public juce::Component
+        {
+        public:
+            explicit AudioSettingsPanel(juce::AudioDeviceManager& deviceManager)
+                : mDeviceManager(deviceManager)
+                , mOriginalSetup(deviceManager.getAudioDeviceSetup())
+                , mOriginalDeviceType(deviceManager.getCurrentAudioDeviceType())
+            {
+                // showChannelsAsStereoPairs is off for inputs: a guitar is one
+                // channel, and forcing pair selection makes that impossible.
+                mSelector = std::make_unique<juce::AudioDeviceSelectorComponent>(
+                    deviceManager, 1, 2, 0, 2, false, false, false, false);
+                addAndMakeVisible(*mSelector);
+
+                mNote.setText("Changes are previewed live. Apply keeps them; Revert restores what you had.",
+                              juce::dontSendNotification);
+                mNote.setFont(juce::FontOptions(11.5f));
+                mNote.setColour(juce::Label::textColourId, theme::colours::textFaint);
+                addAndMakeVisible(mNote);
+
+                mApply.setButtonText("Apply");
+                mApply.onClick = [this] { close(); };
+                addAndMakeVisible(mApply);
+
+                mRevert.setButtonText("Revert");
+                mRevert.onClick = [this] {
+                    if (mOriginalDeviceType.isNotEmpty()
+                        && mDeviceManager.getCurrentAudioDeviceType() != mOriginalDeviceType)
+                        mDeviceManager.setCurrentAudioDeviceType(mOriginalDeviceType, true);
+
+                    mDeviceManager.setAudioDeviceSetup(mOriginalSetup, true);
+                    close();
+                };
+                addAndMakeVisible(mRevert);
+
+                setSize(520, 420);
+            }
+
+            void resized() override
+            {
+                auto area = getLocalBounds().reduced(theme::metrics::gap);
+                auto buttons = area.removeFromBottom(34);
+                mApply.setBounds(buttons.removeFromRight(90).reduced(2));
+                mRevert.setBounds(buttons.removeFromRight(90).reduced(2));
+                area.removeFromBottom(4);
+                mNote.setBounds(area.removeFromBottom(18));
+                mSelector->setBounds(area);
+            }
+
+            void paint(juce::Graphics& g) override { g.fillAll(theme::colours::background); }
+
+        private:
+            void close()
+            {
+                if (auto* dialog = findParentComponentOfClass<juce::DialogWindow>())
+                    dialog->exitModalState(0);
+            }
+
+            juce::AudioDeviceManager& mDeviceManager;
+            juce::AudioDeviceManager::AudioDeviceSetup mOriginalSetup;
+            juce::String mOriginalDeviceType;
+            std::unique_ptr<juce::AudioDeviceSelectorComponent> mSelector;
+            juce::Label mNote;
+            juce::TextButton mApply, mRevert;
+        };
 
         juce::DialogWindow::LaunchOptions options;
-        options.content.setOwned(selector.release());
+        options.content.setOwned(new AudioSettingsPanel(*mDeviceManager));
         options.dialogTitle = "Audio settings";
         options.dialogBackgroundColour = theme::colours::background;
         options.escapeKeyTriggersCloseButton = true;
@@ -495,7 +560,11 @@ void MainView::startScan()
     // Scanning relaunches this executable as a child process for each plug-in.
     // That works from the app; inside a DAW the executable is the host's, so the
     // scan has to happen in the app instead.
-    if (mProcessor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+    //
+    // Owning a device manager is what identifies the app. wrapperType is NOT
+    // usable here: the app constructs the processor directly, so JUCE reports
+    // wrapperType_Undefined rather than _Standalone.
+    if (mDeviceManager == nullptr)
     {
         juce::NativeMessageBox::showAsync(
             juce::MessageBoxOptions()
