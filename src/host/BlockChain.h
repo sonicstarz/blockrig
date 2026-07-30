@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -11,31 +12,61 @@
 namespace blockrig
 {
 
-/// The audio engine: an ordered lane of blocks between the chain's input and
-/// output.
+/// Where a block sits in the lane.
+struct BlockPosition
+{
+    int stage = 0; ///< which stage along the chain
+    int row = 0;   ///< which parallel row within that stage (0 = A, 1 = B)
+    int index = 0; ///< position within the row
+};
+
+/// The audio engine: a chain of stages, each of which is either a single row of
+/// blocks or two parallel rows summed together.
 ///
-/// Deliberately not AudioProcessorGraph. Our topology is a lane (with
-/// structured parallel rows planned later), and rolling it ourselves buys three
-/// things the graph cannot give us: no per-node CriticalSection on every block,
-/// no silence gap while a reconfiguration lands, and exact per-block CPU
-/// attribution because we own each process call site. See docs/12-ARCHITECTURE.md.
+/// Deliberately not AudioProcessorGraph. Our topology is a lane with structured
+/// splits, and rolling it ourselves buys three things the graph cannot give us:
+/// no per-node CriticalSection on every block, no silence gap while a
+/// reconfiguration lands, and exact per-block CPU attribution because we own
+/// each process call site. See docs/12-ARCHITECTURE.md.
 ///
-/// Threading model, identical in spirit to the model swap already proven in the
-/// NAM engine: every edit builds a new immutable Snapshot on the message
-/// thread, publishes it through an atomic pointer, and the audio thread adopts
-/// it at the top of a block. The retired snapshot goes to a queue that the
-/// message thread drains, so the audio thread never allocates, locks or frees.
+/// Threading model, the same pattern proven in the NAM engine: every edit builds
+/// a new immutable Snapshot on the message thread, publishes it through an
+/// atomic pointer, and the audio thread adopts it at the top of a block. The
+/// retired snapshot goes to a queue the message thread drains, so the audio
+/// thread never allocates, locks or frees.
 class BlockChain
 {
 public:
     BlockChain();
     ~BlockChain();
 
-    /// Immutable view of the lane that the audio thread renders. Blocks are
-    /// owned by the chain's block list, not by the snapshot.
-    struct Snapshot
+    static constexpr int kMaxRowsPerStage = 2;
+
+    /// One parallel row inside a rendered stage.
+    struct RenderRow
     {
         std::vector<BlockInstance*> blocks;
+        float gainLinear = 1.0f;
+        float panLeft = 1.0f;  ///< constant-power pan weights
+        float panRight = 1.0f;
+        int latency = 0;    ///< sum of this row's blocks
+        int padSamples = 0; ///< delay so this row lines up with the longest one
+
+        /// Delay line for padSamples, allocated on the message thread and owned
+        /// by the snapshot so the audio thread only ever reads and writes it.
+        juce::AudioBuffer<float> padBuffer;
+        int padWritePosition = 0;
+    };
+
+    struct RenderStage
+    {
+        std::vector<RenderRow> rows;
+        int latency = 0; ///< the longest row, which is what the stage costs
+    };
+
+    struct Snapshot
+    {
+        std::vector<RenderStage> stages;
         int totalLatencySamples = 0;
     };
 
@@ -45,67 +76,93 @@ public:
     void prepare(double sampleRate, int maxBlockSize);
     void release();
 
-    /// Takes ownership. The block must already be prepared. Appends at `index`
-    /// (or at the end when index is out of range) and republishes the lane.
-    void insertBlock(std::unique_ptr<BlockInstance> block, int index);
+    /// Takes ownership. The block must already be prepared.
+    void insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition position);
 
-    /// Removes the block with this uid; it stays alive until the audio thread
-    /// has stopped using it, then is destroyed on the message thread.
     void removeBlock(const juce::String& uid);
-
-    void moveBlock(const juce::String& uid, int newIndex);
-
-    /// Destroys the whole lane.
+    void moveBlock(const juce::String& uid, BlockPosition position);
     void clear();
 
-    /// Frees blocks and snapshots the audio thread has finished with. Safe to
-    /// call from a timer; also called automatically by every edit.
-    void collectGarbage();
+    /// Appends an empty stage. Used when restoring a rig, where the stages have
+    /// to exist before their blocks can be placed into them.
+    void appendEmptyStage();
 
-    /// Re-reads every block's reported latency and republishes if it changed.
-    /// Plug-ins can change latency at any time (lookahead toggles, oversampling)
-    /// without telling anyone, so this is polled rather than pushed.
+    /// Turns a single-row stage into two parallel rows, so the user can put a
+    /// different amp on each side. Vertically stacked in the lane, because that
+    /// is the only arrangement that reads as parallel.
+    bool splitStage(int stageIndex);
+
+    /// Collapses a split back to one row, keeping row A and discarding row B's
+    /// blocks. Returns false if the stage was not split.
+    bool mergeStage(int stageIndex);
+
+    void setRowGainDb(int stageIndex, int rowIndex, float gainDb);
+    void setRowPan(int stageIndex, int rowIndex, float pan);
+    float getRowGainDb(int stageIndex, int rowIndex) const;
+    float getRowPan(int stageIndex, int rowIndex) const;
+
+    void collectGarbage();
     bool refreshLatency();
+
+    int getNumStages() const { return static_cast<int>(mLane.size()); }
+    int getNumRows(int stageIndex) const;
+    bool isStageSplit(int stageIndex) const { return getNumRows(stageIndex) > 1; }
 
     int getNumBlocks() const;
     BlockInstance* getBlockByUid(const juce::String& uid) const;
-    BlockInstance* getBlockByIndex(int index) const;
     std::vector<BlockInstance*> getBlocks() const;
+    std::vector<BlockInstance*> getBlocksInRow(int stageIndex, int rowIndex) const;
+
+    /// Nth block in lane order, counting across stages and rows. Convenience for
+    /// tests and for anything that just wants "the first block".
+    BlockInstance* getBlockByIndex(int index) const;
+
+    /// Where this block currently is, or nullopt if it is not in the lane.
+    std::optional<BlockPosition> findBlock(const juce::String& uid) const;
 
     //==============================================================================
     // Audio thread.
 
-    /// Renders the lane in place. `buffer` is the chain's stereo I/O.
     void process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) noexcept;
 
-    /// Total latency of the currently rendering lane, for the host.
     int getLatencySamples() const noexcept { return mPublishedLatency.load(std::memory_order_acquire); }
 
-    /// Whole-callback cost as a fraction of the buffer's time budget. The
-    /// non-const overload exists so the UI can decay the held peak.
     const BlockLoad& getTotalLoad() const noexcept { return mTotalLoad; }
     BlockLoad& getTotalLoad() noexcept { return mTotalLoad; }
 
-    /// Number of blocks whose processing exceeded the buffer budget.
     int getDropoutCount() const noexcept { return mDropouts.load(std::memory_order_relaxed); }
     void clearDropoutCount() noexcept { mDropouts.store(0, std::memory_order_relaxed); }
 
 private:
+    /// Message-thread model of the lane, which owns the blocks.
+    struct LaneRow
+    {
+        std::vector<std::unique_ptr<BlockInstance>> blocks;
+        float gainDb = 0.0f;
+        /// Default pan for a split: A hard left, B hard right, which is what
+        /// people reach for with two amps.
+        float pan = 0.0f;
+    };
+
+    struct LaneStage
+    {
+        std::vector<LaneRow> rows{1};
+    };
+
     void publishSnapshot();
     void retireSnapshot(Snapshot* snapshot) noexcept;
+    void processStage(RenderStage& stage, juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi,
+                      double bufferDuration) noexcept;
+    LaneRow* rowAt(int stageIndex, int rowIndex);
+    const LaneRow* rowAt(int stageIndex, int rowIndex) const;
 
-    /// Owns every live block, in lane order. Message thread only.
-    std::vector<std::unique_ptr<BlockInstance>> mBlocks;
-
-    /// Blocks removed from the lane but possibly still referenced by a snapshot
-    /// the audio thread is using. Freed by collectGarbage once safely retired.
+    std::vector<LaneStage> mLane;
     std::vector<std::unique_ptr<BlockInstance>> mBlocksAwaitingDeletion;
 
     std::atomic<Snapshot*> mPendingSnapshot{nullptr};
     Snapshot* mActiveSnapshot = nullptr; // audio thread only
     std::atomic<int> mPublishedLatency{0};
 
-    /// Retired snapshots, handed back for the message thread to delete.
     static constexpr int kRetireCapacity = 32;
     juce::AbstractFifo mRetireFifo{kRetireCapacity};
     std::array<Snapshot*, kRetireCapacity> mRetireSlots{};
@@ -117,7 +174,11 @@ private:
     BlockLoad mTotalLoad;
     std::atomic<int> mDropouts{0};
 
-    juce::AudioBuffer<float> mScratch; // for future parallel rows; sized in prepare
+    /// Audio-thread scratch for parallel rows: one buffer per row plus an
+    /// accumulator. Sized in prepare().
+    std::array<juce::AudioBuffer<float>, kMaxRowsPerStage> mRowBuffers;
+    juce::AudioBuffer<float> mStageInput;
+    juce::AudioBuffer<float> mAccumulator;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BlockChain)
 };

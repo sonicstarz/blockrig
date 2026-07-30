@@ -186,7 +186,7 @@ void BlockRigProcessor::updateLatency()
     }
 }
 
-void BlockRigProcessor::addBlock(const juce::PluginDescription& description, int index,
+void BlockRigProcessor::addBlock(const juce::PluginDescription& description, BlockPosition position,
                                  std::function<void(juce::String, juce::String)> onFinished)
 {
     const double sampleRate = getSampleRate() > 0.0 ? getSampleRate() : kFallbackSampleRate;
@@ -196,7 +196,8 @@ void BlockRigProcessor::addBlock(const juce::PluginDescription& description, int
     // plug-in must not freeze the UI while it loads.
     mCatalog.getFormatManager().createPluginInstanceAsync(
         description, sampleRate, blockSize,
-        [this, index, onFinished](std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error) {
+        [this, position, onFinished](std::unique_ptr<juce::AudioPluginInstance> instance,
+                                     const juce::String& error) {
             if (instance == nullptr)
             {
                 if (onFinished)
@@ -205,7 +206,7 @@ void BlockRigProcessor::addBlock(const juce::PluginDescription& description, int
             }
 
             const auto uid = juce::Uuid().toDashedString().substring(0, 8);
-            mChain.insertBlock(std::make_unique<BlockInstance>(std::move(instance), uid), index);
+            mChain.insertBlock(std::make_unique<BlockInstance>(std::move(instance), uid), position);
             updateLatency();
 
             if (onChainChanged)
@@ -225,12 +226,28 @@ void BlockRigProcessor::removeBlock(const juce::String& uid)
         onChainChanged();
 }
 
-void BlockRigProcessor::moveBlock(const juce::String& uid, int newIndex)
+void BlockRigProcessor::moveBlock(const juce::String& uid, BlockPosition position)
 {
-    mChain.moveBlock(uid, newIndex);
+    mChain.moveBlock(uid, position);
 
     if (onChainChanged)
         onChainChanged();
+}
+
+void BlockRigProcessor::splitStage(int stageIndex)
+{
+    if (mChain.splitStage(stageIndex) && onChainChanged)
+        onChainChanged();
+}
+
+void BlockRigProcessor::mergeStage(int stageIndex)
+{
+    if (mChain.mergeStage(stageIndex))
+    {
+        updateLatency();
+        if (onChainChanged)
+            onChainChanged();
+    }
 }
 
 void BlockRigProcessor::getStateInformation(juce::MemoryBlock& destData)

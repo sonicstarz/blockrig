@@ -33,6 +33,8 @@ public:
     void setEditorOpen(bool isOpen);
     void setActivity(float level);
     void setLoad(float fractionOfBudget);
+    /// "A" or "B" on a split stage; empty when the stage has a single path.
+    void setRowLabel(juce::String label);
 
     bool isBypassed() const { return mBypassed; }
 
@@ -40,8 +42,9 @@ public:
     std::function<void()> onToggleBypass;
     std::function<void()> onOpenEditor;
     std::function<void()> onShowMenu;
-    /// Reports a drag in progress and, on release, the index the user dropped at.
-    std::function<void(int targetIndex, bool dropped)> onDragToIndex;
+    /// Reports a drag in progress and, on release, where it was dropped. A point
+    /// rather than an x, because a split stage means the row matters too.
+    std::function<void(juce::Point<int> pointInLane, bool dropped)> onDragTo;
 
 private:
     juce::String mUid, mName, mSubtitle;
@@ -52,6 +55,7 @@ private:
     float mLoad = 0.0f;
     bool mDragging = false;
     juce::Rectangle<int> mHomeBounds;
+    juce::String mRowLabel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BlockTile)
 };
@@ -101,17 +105,21 @@ public:
         repaint();
     }
 
-    void setDropIndicatorX(int x)
+    void setDropIndicator(int x, int row, int totalRows)
     {
-        if (mDropIndicatorX == x)
+        if (mDropIndicatorX == x && mDropRow == row && mDropTotalRows == totalRows)
             return;
         mDropIndicatorX = x;
+        mDropRow = row;
+        mDropTotalRows = juce::jmax(1, totalRows);
         repaint();
     }
 
 private:
     std::vector<juce::Rectangle<int>> mConnectors;
     int mDropIndicatorX = -1;
+    int mDropRow = 0;
+    int mDropTotalRows = 1;
 };
 
 /// The pedalboard strip: Input at the far left, Output at the far right, blocks
@@ -141,11 +149,16 @@ public:
 
 private:
     void timerCallback() override;
-    void addBlockAt(int index);
+    void addBlockAt(BlockPosition position, juce::Component& near);
     void showBlockMenu(const juce::String& uid);
+    void showStageMenu(int stageIndex, juce::Component& near);
     void selectBlock(const juce::String& uid);
-    int indexForX(int x) const;
-    int xForIndex(int index) const;
+
+    /// Which slot the given lane-space point corresponds to.
+    BlockPosition positionForPoint(juce::Point<int> point) const;
+    int xForPosition(BlockPosition position) const;
+    juce::Rectangle<int> boundsForStage(int stageIndex) const;
+    int rowHeight() const;
 
     BlockRigProcessor& mProcessor;
     PluginEditorWindows& mEditorWindows;
@@ -154,11 +167,31 @@ private:
     EndBlock mOutputBlock{EndBlock::Kind::output};
     juce::TextButton mAddButton{"+"};
 
-    std::vector<std::unique_ptr<BlockTile>> mTiles;
-    juce::String mSelectedUid;
+    /// Cached stage geometry, so drag hit-testing and connector drawing agree.
+    struct StageGeometry
+    {
+        int x = 0;
+        int width = 0;
+        int rows = 1;
+    };
 
-    /// Where a dragged tile would land, or -1 when nothing is being dragged.
-    int mDropIndicatorIndex = -1;
+    std::vector<StageGeometry> mStageGeometry;
+
+    /// A tile plus where it sits, so hit-testing a drag can work out both the
+    /// stage and the row under the mouse.
+    struct PlacedTile
+    {
+        std::unique_ptr<BlockTile> tile;
+        BlockPosition position;
+    };
+
+    std::vector<PlacedTile> mTiles;
+
+    /// One "+" per stage row, plus a trailing one for appending a new stage.
+    std::vector<std::unique_ptr<juce::TextButton>> mRowAddButtons;
+
+    juce::String mSelectedUid;
+    BlockPosition mDropPosition;
 
     juce::Viewport mViewport;
     LaneContent mLaneContent;

@@ -70,6 +70,14 @@ void BlockTile::setLoad(float fractionOfBudget)
     mLoad = fractionOfBudget;
 }
 
+void BlockTile::setRowLabel(juce::String label)
+{
+    if (mRowLabel == label)
+        return;
+    mRowLabel = std::move(label);
+    repaint();
+}
+
 void BlockTile::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat().reduced(1.0f);
@@ -92,6 +100,15 @@ void BlockTile::paint(juce::Graphics& g)
         // Small marker so it is obvious which blocks have windows open.
         g.setColour(theme::colours::accent);
         g.fillEllipse(content.getRight() - 8.0f, content.getY() + 1.0f, 8.0f, 8.0f);
+    }
+
+    // Which side of a split this block is on.
+    if (mRowLabel.isNotEmpty())
+    {
+        g.setColour(theme::colours::accent.withAlpha(0.9f));
+        g.setFont(juce::FontOptions(10.0f, juce::Font::bold));
+        g.drawText(mRowLabel, juce::Rectangle<float>(content.getX() + 13.0f, content.getY(), 16.0f, 11.0f),
+                   juce::Justification::centredLeft, false);
     }
 
     content.removeFromTop(14.0f);
@@ -146,12 +163,15 @@ void BlockTile::mouseDrag(const juce::MouseEvent& event)
 
     // Follow the mouse horizontally: without the tile actually moving, dragging
     // feels broken even when the reorder works.
+    // Follows both axes: horizontally to reorder, vertically to move between the
+    // A and B rows of a split.
     auto moved = mHomeBounds;
-    moved.setX(mHomeBounds.getX() + event.getDistanceFromDragStartX());
+    moved.setPosition(mHomeBounds.getX() + event.getDistanceFromDragStartX(),
+                      mHomeBounds.getY() + event.getDistanceFromDragStartY());
     setBounds(moved);
 
-    if (onDragToIndex)
-        onDragToIndex(getBounds().getCentreX(), false);
+    if (onDragTo)
+        onDragTo({getBounds().getCentreX(), getBounds().getCentreY()}, false);
 }
 
 void BlockTile::mouseUp(const juce::MouseEvent& event)
@@ -164,11 +184,11 @@ void BlockTile::mouseUp(const juce::MouseEvent& event)
     mDragging = false;
     setAlpha(1.0f);
 
-    const int centre = getBounds().getCentreX();
+    const juce::Point<int> centre{getBounds().getCentreX(), getBounds().getCentreY()};
     setBounds(mHomeBounds); // the parent will lay us out properly on refresh
 
-    if (onDragToIndex)
-        onDragToIndex(centre, true);
+    if (onDragTo)
+        onDragTo(centre, true);
 }
 
 void BlockTile::mouseDoubleClick(const juce::MouseEvent&)
@@ -262,8 +282,10 @@ LaneView::LaneView(BlockRigProcessor& processor, PluginEditorWindows& editorWind
             onEndBlockSelected(EndBlock::Kind::output);
     };
 
-    mAddButton.onClick = [this] { addBlockAt(static_cast<int>(mTiles.size())); };
-    mAddButton.setTooltip("Add a block to the end of the chain");
+    mAddButton.onClick = [this] {
+        addBlockAt(BlockPosition{mProcessor.getChain().getNumStages(), 0, 0}, mAddButton);
+    };
+    mAddButton.setTooltip("Add a block at the end of the chain");
 
     mEditorWindows.onWindowClosed = [this](juce::String) { refresh(); };
 
@@ -280,100 +302,184 @@ LaneView::~LaneView()
 void LaneView::refresh()
 {
     mTiles.clear();
+    mRowAddButtons.clear();
 
-    for (auto* block : mProcessor.getChain().getBlocks())
+    auto& chain = mProcessor.getChain();
+
+    for (int stageIndex = 0; stageIndex < chain.getNumStages(); ++stageIndex)
     {
-        auto* plugin = block->getPlugin();
+        const int rows = chain.getNumRows(stageIndex);
 
-        // Subtitle carries what the user actually needs at a glance: for the NAM
-        // block the loaded capture, for anything else who made it.
-        juce::String subtitle;
-        if (plugin != nullptr)
+        for (int rowIndex = 0; rowIndex < rows; ++rowIndex)
         {
-            if (auto* nam = dynamic_cast<NamBlockProcessor*>(plugin))
+            const auto blocks = chain.getBlocksInRow(stageIndex, rowIndex);
+
+            for (int index = 0; index < static_cast<int>(blocks.size()); ++index)
             {
-                const auto info = nam->getModelInfo();
-                subtitle = info.json.isNotEmpty() ? info.name : juce::String("no capture loaded");
-            }
-            else
-            {
-                juce::PluginDescription description;
-                plugin->fillInPluginDescription(description);
-                subtitle = description.manufacturerName;
-            }
+                auto* block = blocks[static_cast<size_t>(index)];
+                auto* plugin = block->getPlugin();
 
-            const auto latency = block->getLatencySamples();
-            if (latency > 0)
-                subtitle += "  •  " + juce::String(latency) + " smp";
-        }
-
-        auto tile = std::make_unique<BlockTile>(block->getUid(), shortenName(block->getDisplayName()), subtitle);
-        const auto uid = block->getUid();
-
-        tile->setBypassed(block->isBypassed());
-        tile->setEditorOpen(mEditorWindows.isOpen(uid));
-        tile->setSelected(uid == mSelectedUid);
-
-        tile->onSelect = [this, uid] { selectBlock(uid); };
-
-        tile->onToggleBypass = [this, uid] {
-            if (auto* target = mProcessor.getChain().getBlockByUid(uid))
-            {
-                target->setBypassed(!target->isBypassed());
-                refresh();
-            }
-        };
-
-        tile->onOpenEditor = [this, uid] {
-            if (auto* target = mProcessor.getChain().getBlockByUid(uid))
-                if (auto* plugin = target->getPlugin())
+                // Subtitle carries what the user needs at a glance: for the NAM
+                // block the loaded capture, for anything else who made it.
+                juce::String subtitle;
+                if (plugin != nullptr)
                 {
-                    mEditorWindows.show(uid, *plugin);
-                    refresh();
+                    if (auto* nam = dynamic_cast<NamBlockProcessor*>(plugin))
+                    {
+                        const auto info = nam->getModelInfo();
+                        subtitle = info.json.isNotEmpty() ? info.name : juce::String("no capture");
+                    }
+                    else
+                    {
+                        juce::PluginDescription description;
+                        plugin->fillInPluginDescription(description);
+                        subtitle = description.manufacturerName;
+                    }
+
+                    const auto latency = block->getLatencySamples();
+                    if (latency > 0)
+                        subtitle += "  " + juce::String(latency) + " smp";
                 }
-        };
 
-        tile->onShowMenu = [this, uid] { showBlockMenu(uid); };
+                auto tile = std::make_unique<BlockTile>(block->getUid(), shortenName(block->getDisplayName()),
+                                                       subtitle);
+                const auto uid = block->getUid();
 
-        tile->onDragToIndex = [this, uid](int xInLane, bool dropped) {
-            const int target = indexForX(xInLane);
+                tile->setBypassed(block->isBypassed());
+                tile->setEditorOpen(mEditorWindows.isOpen(uid));
+                tile->setSelected(uid == mSelectedUid);
+                tile->setRowLabel(rows > 1 ? (rowIndex == 0 ? "A" : "B") : juce::String());
 
-            if (!dropped)
-            {
-                mDropIndicatorIndex = target;
-                mLaneContent.setDropIndicatorX(xForIndex(target));
-                return;
+                tile->onSelect = [this, uid] { selectBlock(uid); };
+
+                tile->onToggleBypass = [this, uid] {
+                    if (auto* target = mProcessor.getChain().getBlockByUid(uid))
+                    {
+                        target->setBypassed(!target->isBypassed());
+                        refresh();
+                    }
+                };
+
+                tile->onOpenEditor = [this, uid] {
+                    if (auto* target = mProcessor.getChain().getBlockByUid(uid))
+                        if (auto* pluginToShow = target->getPlugin())
+                        {
+                            mEditorWindows.show(uid, *pluginToShow);
+                            refresh();
+                        }
+                };
+
+                tile->onShowMenu = [this, uid] { showBlockMenu(uid); };
+
+                tile->onDragTo = [this, uid](juce::Point<int> pointInLane, bool dropped) {
+                    const auto target = positionForPoint(pointInLane);
+
+                    if (!dropped)
+                    {
+                        mDropPosition = target;
+                        mLaneContent.setDropIndicator(xForPosition(target), target.row,
+                                                      mProcessor.getChain().getNumRows(target.stage));
+                        return;
+                    }
+
+                    mLaneContent.setDropIndicator(-1, 0, 1);
+                    mProcessor.moveBlock(uid, target);
+                    refresh();
+                };
+
+                mLaneContent.addAndMakeVisible(*tile);
+                mTiles.push_back({std::move(tile), BlockPosition{stageIndex, rowIndex, index}});
             }
 
-            mDropIndicatorIndex = -1;
-            mLaneContent.setDropIndicatorX(-1);
-            mProcessor.moveBlock(uid, target);
-            refresh();
-        };
-
-        mLaneContent.addAndMakeVisible(*tile);
-        mTiles.push_back(std::move(tile));
+            // One "+" at the end of each row, so a split can be filled per side.
+            auto addButton = std::make_unique<juce::TextButton>("+");
+            const BlockPosition appendHere{stageIndex, rowIndex, static_cast<int>(blocks.size())};
+            auto* buttonPtr = addButton.get();
+            addButton->setTooltip(rows > 1 ? juce::String("Add a block to side ")
+                                                 + (rowIndex == 0 ? "A" : "B")
+                                           : juce::String("Add a block here"));
+            addButton->onClick = [this, appendHere, buttonPtr] { addBlockAt(appendHere, *buttonPtr); };
+            mLaneContent.addAndMakeVisible(*addButton);
+            mRowAddButtons.push_back(std::move(addButton));
+        }
     }
 
     resized();
     mLaneContent.repaint();
 }
 
-int LaneView::xForIndex(int index) const
+int LaneView::rowHeight() const
 {
-    const int slotWidth = theme::metrics::blockWidth + theme::metrics::arrowWidth;
-    const int laneStart = theme::metrics::endBlockWidth + theme::metrics::arrowWidth;
-    return laneStart + index * slotWidth - theme::metrics::arrowWidth / 2;
+    return theme::metrics::blockHeight;
 }
 
-int LaneView::indexForX(int x) const
+juce::Rectangle<int> LaneView::boundsForStage(int stageIndex) const
 {
-    // Each slot is a tile plus the arrow gap after it; the input block offsets
-    // everything by its own width.
+    if (!juce::isPositiveAndBelow(stageIndex, static_cast<int>(mStageGeometry.size())))
+        return {};
+
+    const auto& geometry = mStageGeometry[static_cast<size_t>(stageIndex)];
+    return {geometry.x, 0, geometry.width, geometry.rows * rowHeight()};
+}
+
+int LaneView::xForPosition(BlockPosition position) const
+{
+    // Left edge of the slot the block would occupy.
     const int slotWidth = theme::metrics::blockWidth + theme::metrics::arrowWidth;
-    const int laneStart = theme::metrics::endBlockWidth + theme::metrics::arrowWidth;
-    const int index = (x - laneStart + slotWidth / 2) / slotWidth;
-    return juce::jlimit(0, static_cast<int>(mTiles.size()), index);
+
+    if (juce::isPositiveAndBelow(position.stage, static_cast<int>(mStageGeometry.size())))
+    {
+        const auto& geometry = mStageGeometry[static_cast<size_t>(position.stage)];
+        return geometry.x + position.index * slotWidth - theme::metrics::arrowWidth / 2;
+    }
+
+    // Past the end: after the last stage.
+    if (!mStageGeometry.empty())
+    {
+        const auto& last = mStageGeometry.back();
+        return last.x + last.width + theme::metrics::arrowWidth / 2;
+    }
+
+    return theme::metrics::endBlockWidth + theme::metrics::arrowWidth / 2;
+}
+
+BlockPosition LaneView::positionForPoint(juce::Point<int> point) const
+{
+    const int slotWidth = theme::metrics::blockWidth + theme::metrics::arrowWidth;
+
+    // Which stage is the mouse over (or nearest)?
+    int stageIndex = static_cast<int>(mStageGeometry.size());
+
+    for (size_t i = 0; i < mStageGeometry.size(); ++i)
+    {
+        const auto& geometry = mStageGeometry[i];
+
+        if (point.x < geometry.x + geometry.width + theme::metrics::arrowWidth / 2)
+        {
+            stageIndex = static_cast<int>(i);
+            break;
+        }
+    }
+
+    BlockPosition position;
+    position.stage = stageIndex;
+
+    if (!juce::isPositiveAndBelow(stageIndex, static_cast<int>(mStageGeometry.size())))
+        return position; // a new stage at the end
+
+    const auto& geometry = mStageGeometry[static_cast<size_t>(stageIndex)];
+
+    // Which row: rows stack vertically, so this is simply which band we are in.
+    const int laneTop = juce::jmax(0, (getHeight() - geometry.rows * rowHeight()) / 2);
+    const int relativeY = point.y - laneTop;
+    position.row = juce::jlimit(0, geometry.rows - 1, relativeY / juce::jmax(1, rowHeight()));
+
+    position.index = juce::jmax(0, (point.x - geometry.x + slotWidth / 2) / slotWidth);
+
+    const auto blocks = mProcessor.getChain().getBlocksInRow(position.stage, position.row);
+    position.index = juce::jlimit(0, static_cast<int>(blocks.size()), position.index);
+
+    return position;
 }
 
 void LaneView::selectBlock(const juce::String& uid)
@@ -383,8 +489,8 @@ void LaneView::selectBlock(const juce::String& uid)
 
     mSelectedUid = uid;
 
-    for (auto& tile : mTiles)
-        tile->setSelected(tile->getUid() == uid);
+    for (auto& placed : mTiles)
+        placed.tile->setSelected(placed.tile->getUid() == uid);
 
     mInputBlock.setSelected(false);
     mOutputBlock.setSelected(false);
@@ -393,27 +499,71 @@ void LaneView::selectBlock(const juce::String& uid)
         onSelectionChanged();
 }
 
-void LaneView::addBlockAt(int index)
+void LaneView::addBlockAt(BlockPosition position, juce::Component& near)
 {
-    BlockPicker::show(mProcessor.getCatalog(), mAddButton,
-                      [this, index](const juce::PluginDescription& description) {
-                          mProcessor.addBlock(description, index, [this](juce::String uid, juce::String error) {
-                              if (error.isNotEmpty())
-                              {
-                                  juce::NativeMessageBox::showAsync(
-                                      juce::MessageBoxOptions()
-                                          .withIconType(juce::MessageBoxIconType::WarningIcon)
-                                          .withTitle("Could not add block")
-                                          .withMessage(error)
-                                          .withButton("OK"),
-                                      nullptr);
-                                  return;
-                              }
+    BlockPicker::show(mProcessor.getCatalog(), near,
+                      [this, position](const juce::PluginDescription& description) {
+                          mProcessor.addBlock(description, position,
+                                              [this](juce::String uid, juce::String error) {
+                                                  if (error.isNotEmpty())
+                                                  {
+                                                      juce::NativeMessageBox::showAsync(
+                                                          juce::MessageBoxOptions()
+                                                              .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                                              .withTitle("Could not add block")
+                                                              .withMessage(error)
+                                                              .withButton("OK"),
+                                                          nullptr);
+                                                      return;
+                                                  }
 
-                              refresh();
-                              selectBlock(uid);
-                          });
+                                                  refresh();
+                                                  selectBlock(uid);
+                                              });
                       });
+}
+
+void LaneView::showStageMenu(int stageIndex, juce::Component& near)
+{
+    auto& chain = mProcessor.getChain();
+    const bool split = chain.isStageSplit(stageIndex);
+
+    juce::PopupMenu menu;
+
+    if (split)
+    {
+        menu.addSectionHeader("Parallel stage");
+        menu.addItem(1, "Merge back to one path (discards side B)");
+        menu.addSeparator();
+        menu.addItem(2, "Side A hard left / Side B hard right");
+        menu.addItem(3, "Both sides centred");
+    }
+    else
+    {
+        menu.addItem(4, "Split into two paths (A / B)");
+    }
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&near),
+                       [this, stageIndex](int choice) {
+                           auto& target = mProcessor.getChain();
+
+                           switch (choice)
+                           {
+                               case 1: mProcessor.mergeStage(stageIndex); break;
+                               case 2:
+                                   target.setRowPan(stageIndex, 0, -1.0f);
+                                   target.setRowPan(stageIndex, 1, 1.0f);
+                                   break;
+                               case 3:
+                                   target.setRowPan(stageIndex, 0, 0.0f);
+                                   target.setRowPan(stageIndex, 1, 0.0f);
+                                   break;
+                               case 4: mProcessor.splitStage(stageIndex); break;
+                               default: return;
+                           }
+
+                           refresh();
+                       });
 }
 
 void LaneView::showBlockMenu(const juce::String& uid)
@@ -439,12 +589,17 @@ void LaneView::showBlockMenu(const juce::String& uid)
                           + juce::String(load.getPeak() * 100.0f, 2) + "%)   Latency "
                           + juce::String(block->getLatencySamples()) + " smp");
 
-    int index = 0;
-    for (size_t i = 0; i < mTiles.size(); ++i)
-        if (mTiles[i]->getUid() == uid)
-            index = static_cast<int>(i);
+    const auto found = mProcessor.getChain().findBlock(uid);
+    const auto position = found.value_or(BlockPosition{});
+    const bool split = mProcessor.getChain().isStageSplit(position.stage);
 
-    menu.showMenuAsync(juce::PopupMenu::Options(), [this, uid, index](int choice) {
+    menu.addSeparator();
+    if (split)
+        menu.addItem(6, "Merge this stage back to one path");
+    else
+        menu.addItem(7, "Split this stage into A / B");
+
+    menu.showMenuAsync(juce::PopupMenu::Options(), [this, uid, position](int choice) {
         auto* target = mProcessor.getChain().getBlockByUid(uid);
 
         switch (choice)
@@ -462,8 +617,14 @@ void LaneView::showBlockMenu(const juce::String& uid)
                         refresh();
                     }
                 break;
-            case 3: addBlockAt(index); break;
-            case 4: addBlockAt(index + 1); break;
+            case 3:
+                if (auto* tile = mTiles.empty() ? nullptr : mTiles.front().tile.get())
+                    addBlockAt(position, *tile);
+                break;
+            case 4:
+                if (auto* tile = mTiles.empty() ? nullptr : mTiles.front().tile.get())
+                    addBlockAt(BlockPosition{position.stage, position.row, position.index + 1}, *tile);
+                break;
             case 5:
                 mEditorWindows.close(uid);
                 mProcessor.removeBlock(uid);
@@ -471,6 +632,8 @@ void LaneView::showBlockMenu(const juce::String& uid)
                     selectBlock({});
                 refresh();
                 break;
+            case 6: mProcessor.mergeStage(position.stage); refresh(); break;
+            case 7: mProcessor.splitStage(position.stage); refresh(); break;
             default: break;
         }
     });
@@ -479,14 +642,14 @@ void LaneView::showBlockMenu(const juce::String& uid)
 void LaneView::timerCallback()
 {
     // Cheap live feedback: each tile's activity plus the I/O meters.
-    for (auto& tile : mTiles)
+    for (auto& placed : mTiles)
     {
-        if (auto* block = mProcessor.getChain().getBlockByUid(tile->getUid()))
+        if (auto* block = mProcessor.getChain().getBlockByUid(placed.tile->getUid()))
         {
-            tile->setLoad(block->getLoad().getAverage());
-            tile->setActivity(juce::jlimit(0.0f, 1.0f, block->getOutputLevel()));
-            tile->setBypassed(block->isBypassed());
-            tile->setEditorOpen(mEditorWindows.isOpen(tile->getUid()));
+            placed.tile->setLoad(block->getLoad().getAverage());
+            placed.tile->setActivity(juce::jlimit(0.0f, 1.0f, block->getOutputLevel()));
+            placed.tile->setBypassed(block->isBypassed());
+            placed.tile->setEditorOpen(mEditorWindows.isOpen(placed.tile->getUid()));
         }
     }
 
@@ -522,12 +685,16 @@ void LaneContent::paint(juce::Graphics& g)
                                                 juce::PathStrokeType::rounded));
     }
 
-    // Where a dragged tile would land.
+    // Where a dragged tile would land: only as tall as the row it would join, so
+    // on a split it is clear which side is being targeted.
     if (mDropIndicatorX >= 0)
     {
+        const auto bandHeight = static_cast<float>(getHeight()) / static_cast<float>(mDropTotalRows);
+        const auto top = bandHeight * static_cast<float>(mDropRow);
+
         g.setColour(theme::colours::accent);
-        g.fillRoundedRectangle(static_cast<float>(mDropIndicatorX) - 1.5f, 8.0f, 3.0f,
-                               static_cast<float>(getHeight()) - 16.0f, 1.5f);
+        g.fillRoundedRectangle(static_cast<float>(mDropIndicatorX) - 1.5f, top + 8.0f, 3.0f,
+                               juce::jmax(10.0f, bandHeight - 16.0f), 1.5f);
     }
 }
 
@@ -535,44 +702,110 @@ void LaneView::resized()
 {
     mViewport.setBounds(getLocalBounds());
 
-    const int height = theme::metrics::blockHeight;
-    const int y = juce::jmax(0, (getHeight() - height) / 2);
+    auto& chain = mProcessor.getChain();
 
+    // How tall is the lane? A split stage needs two rows, so the whole strip
+    // grows to the tallest stage.
+    int maxRows = 1;
+    for (int stageIndex = 0; stageIndex < chain.getNumStages(); ++stageIndex)
+        maxRows = juce::jmax(maxRows, chain.getNumRows(stageIndex));
+
+    const int singleRow = rowHeight();
+    const int laneHeight = maxRows * singleRow;
+    const int laneTop = juce::jmax(0, (getHeight() - laneHeight) / 2);
+
+    // The ends sit centred against the whole (possibly two-row) lane.
     int x = 0;
-    mInputBlock.setBounds(x, y, theme::metrics::endBlockWidth, height);
+    mInputBlock.setBounds(x, laneTop + (laneHeight - singleRow) / 2, theme::metrics::endBlockWidth, singleRow);
     x += theme::metrics::endBlockWidth + theme::metrics::arrowWidth;
 
-    for (auto& tile : mTiles)
+    mStageGeometry.clear();
+    size_t tileCursor = 0;
+    size_t addCursor = 0;
+    const int slotWidth = theme::metrics::blockWidth + theme::metrics::arrowWidth;
+
+    for (int stageIndex = 0; stageIndex < chain.getNumStages(); ++stageIndex)
     {
-        tile->setBounds(x, y, theme::metrics::blockWidth, height);
-        x += theme::metrics::blockWidth + theme::metrics::arrowWidth;
+        const int rows = chain.getNumRows(stageIndex);
+
+        // Stage width is the widest of its rows, so both rows share a column.
+        int widestRow = 0;
+        for (int rowIndex = 0; rowIndex < rows; ++rowIndex)
+        {
+            const int count = static_cast<int>(chain.getBlocksInRow(stageIndex, rowIndex).size());
+            widestRow = juce::jmax(widestRow, count * slotWidth + 32); // room for the row's "+"
+        }
+
+        StageGeometry geometry;
+        geometry.x = x;
+        geometry.width = juce::jmax(slotWidth, widestRow);
+        geometry.rows = rows;
+        mStageGeometry.push_back(geometry);
+
+        // Rows stack vertically: side A on top, side B beneath it. Horizontal
+        // would read as "one after the other", which is the opposite of what a
+        // parallel split means.
+        const int stageTop = laneTop + (laneHeight - rows * singleRow) / 2;
+
+        for (int rowIndex = 0; rowIndex < rows; ++rowIndex)
+        {
+            const int rowY = stageTop + rowIndex * singleRow;
+            int rowX = x;
+
+            const int count = static_cast<int>(chain.getBlocksInRow(stageIndex, rowIndex).size());
+
+            for (int i = 0; i < count && tileCursor < mTiles.size(); ++i, ++tileCursor)
+            {
+                mTiles[tileCursor].tile->setBounds(rowX, rowY + 3, theme::metrics::blockWidth,
+                                                   singleRow - 6);
+                rowX += slotWidth;
+            }
+
+            if (addCursor < mRowAddButtons.size())
+            {
+                mRowAddButtons[addCursor]->setBounds(rowX, rowY + singleRow / 2 - 13, 26, 26);
+                ++addCursor;
+            }
+        }
+
+        x += geometry.width;
     }
 
-    mAddButton.setBounds(x, y + height / 2 - 14, 28, 28);
+    // Trailing "+" appends a whole new stage at the end of the chain.
+    mAddButton.setBounds(x, laneTop + laneHeight / 2 - 14, 28, 28);
     x += 28 + theme::metrics::arrowWidth;
 
-    mOutputBlock.setBounds(x, y, theme::metrics::endBlockWidth, height);
+    mOutputBlock.setBounds(x, laneTop + (laneHeight - singleRow) / 2, theme::metrics::endBlockWidth, singleRow);
     x += theme::metrics::endBlockWidth;
 
-    mLaneContent.setSize(juce::jmax(x + theme::metrics::gap, getWidth()), getHeight());
+    mLaneContent.setSize(juce::jmax(x + theme::metrics::gap, getWidth()),
+                         juce::jmax(getHeight(), laneHeight + 2 * theme::metrics::gap));
 
-    // Connector runs: one between every pair of adjacent boxes in the lane.
+    // Connectors: one run into each stage and out of it. A split fans out to both
+    // rows and back in, which is what makes the parallelism legible.
     std::vector<juce::Rectangle<int>> connectors;
-    juce::Component* previous = &mInputBlock;
+    int previousRight = mInputBlock.getRight();
+    int previousCentreY = mInputBlock.getBounds().getCentreY();
 
-    const auto connectTo = [&connectors, &previous, y, height](juce::Component& next) {
-        const int from = previous->getRight();
-        const int to = next.getX();
-        if (to > from)
-            connectors.push_back({from, y, to - from, height});
-        previous = &next;
-    };
+    for (int stageIndex = 0; stageIndex < static_cast<int>(mStageGeometry.size()); ++stageIndex)
+    {
+        const auto& geometry = mStageGeometry[static_cast<size_t>(stageIndex)];
+        const int stageTop = laneTop + (laneHeight - geometry.rows * singleRow) / 2;
 
-    for (auto& tile : mTiles)
-        connectTo(*tile);
+        for (int rowIndex = 0; rowIndex < geometry.rows; ++rowIndex)
+        {
+            const int rowCentreY = stageTop + rowIndex * singleRow + singleRow / 2;
+            connectors.push_back({previousRight, juce::jmin(previousCentreY, rowCentreY),
+                                  geometry.x - previousRight,
+                                  std::abs(rowCentreY - previousCentreY) + 2});
+        }
 
-    connectTo(mAddButton);
-    connectTo(mOutputBlock);
+        previousRight = geometry.x + geometry.width;
+        previousCentreY = laneTop + laneHeight / 2;
+    }
+
+    connectors.push_back({previousRight, previousCentreY - 1,
+                          juce::jmax(0, mOutputBlock.getX() - previousRight), 2});
 
     mLaneContent.setConnectors(std::move(connectors));
 }

@@ -1,5 +1,7 @@
 #include "state/RigState.h"
 
+#include <tuple>
+
 #include "BlockRigProcessor.h"
 
 namespace blockrig::rigstate
@@ -67,12 +69,15 @@ public:
         juce::PluginDescription description;
         juce::MemoryBlock state;
         bool bypassed = false;
+        BlockPosition position;
     };
 
     SequentialRestore(BlockRigProcessor& processor, std::vector<SavedBlock> blocks,
+                      std::vector<std::tuple<int, int, float, float>> rowSettings,
                       std::function<void(RestoreResult)> onFinished)
         : mProcessor(processor)
         , mBlocks(std::move(blocks))
+        , mRowSettings(std::move(rowSettings))
         , mOnFinished(std::move(onFinished))
     {
         mResult.blocksRequested = static_cast<int>(mBlocks.size());
@@ -85,6 +90,17 @@ private:
     {
         if (mIndex >= static_cast<int>(mBlocks.size()))
         {
+            // Row gain and pan last: the rows have to exist first.
+            auto& chain = mProcessor.getChain();
+
+            for (const auto& [stageIndex, rowIndex, gainDb, pan] : mRowSettings)
+            {
+                if (rowIndex > 0 && !chain.isStageSplit(stageIndex))
+                    continue;
+                chain.setRowGainDb(stageIndex, rowIndex, gainDb);
+                chain.setRowPan(stageIndex, rowIndex, pan);
+            }
+
             if (mOnFinished)
                 mOnFinished(mResult);
             return;
@@ -93,7 +109,15 @@ private:
         const auto& saved = mBlocks[static_cast<size_t>(mIndex)];
         auto self = shared_from_this();
 
-        mProcessor.addBlock(saved.description, mIndex, [self](juce::String uid, juce::String error) {
+        // Make sure the stage exists (and is split) before the block lands in it.
+        auto& chain = mProcessor.getChain();
+        while (chain.getNumStages() <= saved.position.stage)
+            chain.appendEmptyStage();
+
+        if (saved.position.row > 0 && !chain.isStageSplit(saved.position.stage))
+            chain.splitStage(saved.position.stage);
+
+        mProcessor.addBlock(saved.description, saved.position, [self](juce::String uid, juce::String error) {
             self->blockFinished(std::move(uid), std::move(error));
         });
     }
@@ -139,6 +163,7 @@ private:
 
     BlockRigProcessor& mProcessor;
     std::vector<SavedBlock> mBlocks;
+    std::vector<std::tuple<int, int, float, float>> mRowSettings;
     std::function<void(RestoreResult)> mOnFinished;
     RestoreResult mResult;
     int mIndex = 0;
@@ -163,16 +188,26 @@ juce::ValueTree toValueTree(BlockRigProcessor& processor)
     output.setProperty(ids::gainDb, processor.getOutputGainDb(), nullptr);
     rig.appendChild(output, nullptr);
 
-    // One Stage per block for now. Stages exist so parallel rows can arrive
-    // later without a schema migration.
+    // Stage per chain stage, Row per parallel path. A split writes two rows.
     juce::ValueTree lane(ids::lane);
+    auto& chain = processor.getChain();
 
-    for (auto* block : processor.getChain().getBlocks())
+    for (int stageIndex = 0; stageIndex < chain.getNumStages(); ++stageIndex)
     {
         juce::ValueTree stage(ids::stage);
-        juce::ValueTree row(ids::row);
-        row.appendChild(describeBlock(*block), nullptr);
-        stage.appendChild(row, nullptr);
+
+        for (int rowIndex = 0; rowIndex < chain.getNumRows(stageIndex); ++rowIndex)
+        {
+            juce::ValueTree row(ids::row);
+            row.setProperty(ids::gainDb, chain.getRowGainDb(stageIndex, rowIndex), nullptr);
+            row.setProperty("pan", chain.getRowPan(stageIndex, rowIndex), nullptr);
+
+            for (auto* block : chain.getBlocksInRow(stageIndex, rowIndex))
+                row.appendChild(describeBlock(*block), nullptr);
+
+            stage.appendChild(row, nullptr);
+        }
+
         lane.appendChild(stage, nullptr);
     }
 
@@ -217,6 +252,7 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
 
     // Collect the saved lane before touching the live one.
     std::vector<SequentialRestore::SavedBlock> saved;
+    std::vector<std::tuple<int, int, float, float>> rowSettings; // stage, row, gain, pan
     const auto lane = rig.getChildWithName(ids::lane);
 
     for (int stageIndex = 0; stageIndex < lane.getNumChildren(); ++stageIndex)
@@ -227,6 +263,12 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
         {
             const auto row = stage.getChild(rowIndex);
 
+            rowSettings.emplace_back(stageIndex, rowIndex,
+                                     static_cast<float>(row.getProperty(ids::gainDb, 0.0)),
+                                     static_cast<float>(row.getProperty("pan", 0.0)));
+
+            int indexInRow = 0;
+
             for (int blockIndex = 0; blockIndex < row.getNumChildren(); ++blockIndex)
             {
                 const auto blockTree = row.getChild(blockIndex);
@@ -234,6 +276,7 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
                     continue;
 
                 SequentialRestore::SavedBlock entry;
+                entry.position = BlockPosition{stageIndex, rowIndex, indexInRow++};
                 entry.description.pluginFormatName = blockTree.getProperty(ids::format).toString();
                 entry.description.fileOrIdentifier = blockTree.getProperty(ids::identifier).toString();
                 entry.description.name = blockTree.getProperty(ids::name).toString();
@@ -254,7 +297,8 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
 
     processor.getChain().clear();
 
-    auto sequence = std::make_shared<SequentialRestore>(processor, std::move(saved), std::move(onFinished));
+    auto sequence = std::make_shared<SequentialRestore>(processor, std::move(saved),
+                                                       std::move(rowSettings), std::move(onFinished));
     sequence->start();
 }
 

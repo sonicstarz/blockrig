@@ -32,13 +32,13 @@ void pump(int milliseconds)
 
 /// Adds a block and waits for the asynchronous creation to complete.
 juce::String addBlockAndWait(blockrig::BlockRigProcessor& processor, const juce::PluginDescription& description,
-                             int index)
+                             blockrig::BlockPosition position)
 {
     juce::String resultUid;
     juce::String resultError;
     bool done = false;
 
-    processor.addBlock(description, index, [&](juce::String uid, juce::String error) {
+    processor.addBlock(description, position, [&](juce::String uid, juce::String error) {
         resultUid = std::move(uid);
         resultError = std::move(error);
         done = true;
@@ -137,10 +137,10 @@ int main(int argc, char** argv)
             return 1;
 
         // NAM first, then a third-party AU after it: the canonical guitar rig.
-        namUid = addBlockAndWait(processor, builtIns.getFirst(), 0);
+        namUid = addBlockAndWait(processor, builtIns.getFirst(), blockrig::BlockPosition{0, 0, 0});
         check(namUid.isNotEmpty(), "NAM block added");
 
-        const auto auUid = addBlockAndWait(processor, *au, 1);
+        const auto auUid = addBlockAndWait(processor, *au, blockrig::BlockPosition{1, 0, 0});
         check(auUid.isNotEmpty(), "AU block added");
         check(processor.getChain().getNumBlocks() == 2, "lane holds two blocks");
         check(processor.getChain().getBlockByIndex(0)->getUid() == namUid, "NAM is first in the lane");

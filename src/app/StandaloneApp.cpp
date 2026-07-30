@@ -25,7 +25,10 @@ class StandaloneApp final : public juce::JUCEApplication
 public:
     const juce::String getApplicationName() override { return "BlockRig"; }
     const juce::String getApplicationVersion() override { return "0.2.0"; }
-    bool moreThanOneInstanceAllowed() override { return false; }
+    /// Must be true. Plug-in scanning relaunches *this* executable as a child
+    /// process for each plug-in, and JUCE's single-instance guard would kill
+    /// those children — which silently breaks scanning entirely.
+    bool moreThanOneInstanceAllowed() override { return true; }
 
     void initialise(const juce::String& commandLine) override
     {

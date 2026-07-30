@@ -181,7 +181,7 @@ void testOrderingAndLatency()
     // Latency only becomes meaningful once the plug-in has been prepared, which
     // the chain does on insertion — so read it from the block after inserting.
     auto* latentPtr = latentBlock.get();
-    chain.insertBlock(std::move(latentBlock), 0);
+    chain.insertBlock(std::move(latentBlock), blockrig::BlockPosition{0, 0, 0});
     check(chain.getNumBlocks() == 1, "block inserted");
     check(render(chain, 4), "one-block chain renders sanely");
 
@@ -194,20 +194,20 @@ void testOrderingAndLatency()
 
     // Add a second copy: latency must sum.
     auto secondLatent = makeBlock(*latent);
-    chain.insertBlock(std::move(secondLatent), 1);
+    chain.insertBlock(std::move(secondLatent), blockrig::BlockPosition{1, 0, 0});
     check(render(chain, 4), "two-block chain renders sanely");
     check(chain.getLatencySamples() == 2 * blockLatency, "latency sums across blocks");
 
     // A zero-latency block should not change the total.
     auto delayBlock = makeBlock(*delay);
-    chain.insertBlock(std::move(delayBlock), 1);
+    chain.insertBlock(std::move(delayBlock), blockrig::BlockPosition{1, 0, 0});
     check(chain.getNumBlocks() == 3, "third block inserted in the middle");
     check(render(chain, 8), "three-block chain renders sanely");
 
     // Reordering must not change latency, only order.
     const int beforeMove = chain.getLatencySamples();
     const auto uid = chain.getBlockByIndex(0)->getUid();
-    chain.moveBlock(uid, 2);
+    chain.moveBlock(uid, blockrig::BlockPosition{2, 0, 0});
     check(render(chain, 4), "chain renders sanely after a reorder");
     check(chain.getBlockByIndex(2)->getUid() == uid, "block moved to the requested index");
     check(chain.getLatencySamples() == beforeMove, "reordering leaves total latency unchanged");
@@ -234,7 +234,7 @@ void testBypass()
 
     auto block = makeBlock(*delay);
     auto* blockPtr = block.get();
-    chain.insertBlock(std::move(block), 0);
+    chain.insertBlock(std::move(block), blockrig::BlockPosition{0, 0, 0});
 
     check(!blockPtr->isBypassed(), "blocks start active");
     check(render(chain, 4), "renders while active");
@@ -266,7 +266,7 @@ void testCpuAttribution()
 
     auto block = makeBlock(*delay);
     auto* blockPtr = block.get();
-    chain.insertBlock(std::move(block), 0);
+    chain.insertBlock(std::move(block), blockrig::BlockPosition{0, 0, 0});
 
     render(chain, 400);
 
@@ -312,7 +312,7 @@ void testEditsWhileRendering()
     for (int round = 0; round < 30; ++round)
     {
         if (auto block = makeBlock(round % 2 == 0 ? *delay : *bandpass))
-            chain.insertBlock(std::move(block), round % 3);
+            chain.insertBlock(std::move(block), blockrig::BlockPosition{round % 3, 0, 0});
 
         for (int i = 0; i < 6; ++i)
         {
@@ -345,7 +345,7 @@ void testEditsWhileRendering()
         }
 
         if (chain.getNumBlocks() > 2)
-            chain.moveBlock(chain.getBlockByIndex(0)->getUid(), chain.getNumBlocks() - 1);
+            chain.moveBlock(chain.getBlockByIndex(0)->getUid(), blockrig::BlockPosition{chain.getNumStages() - 1, 0, 0});
 
         chain.collectGarbage();
     }
@@ -360,6 +360,82 @@ void testEditsWhileRendering()
     check(render(chain, 8), "renders sanely after clearing the lane");
     check(chain.getNumBlocks() == 0, "lane is empty after clear");
     chain.collectGarbage();
+}
+
+/// A split stage: two parallel rows, summed. This is what dual-amp rigs are made
+/// of, and what the lane draws stacked vertically.
+void testParallelSplit()
+{
+    std::printf("\nParallel split (side A / side B)\n");
+
+    const auto* delay = findDescription("AUDelay");
+    const auto* latent = findDescription("AUDynamicsProcessor");
+
+    if (delay == nullptr || latent == nullptr)
+    {
+        check(false, "found AUs to build a split from");
+        return;
+    }
+
+    blockrig::BlockChain chain;
+    chain.prepare(kSampleRate, kBlockSize);
+
+    chain.insertBlock(makeBlock(*delay), blockrig::BlockPosition{0, 0, 0});
+    check(chain.getNumStages() == 1, "one stage to begin with");
+    check(!chain.isStageSplit(0), "and it is not split");
+
+    check(chain.splitStage(0), "stage splits");
+    check(chain.isStageSplit(0), "stage reports itself split");
+    check(chain.getNumRows(0) == 2, "the split has two rows");
+
+    // Splitting defaults the sides to opposite ends of the image, which is what
+    // two amps almost always want.
+    check(std::abs(chain.getRowPan(0, 0) + 1.0f) < 0.01f, "side A defaults hard left");
+    check(std::abs(chain.getRowPan(0, 1) - 1.0f) < 0.01f, "side B defaults hard right");
+
+    float magnitude = 0.0f;
+    check(render(chain, 8, &magnitude), "renders with one side empty");
+    check(magnitude > 0.05f, "an empty side still passes its share of signal");
+
+    // Put a block on side B and confirm both rows are actually processed.
+    chain.insertBlock(makeBlock(*latent), blockrig::BlockPosition{0, 1, 0});
+    check(chain.getNumBlocks() == 2, "both sides hold a block");
+    check(static_cast<int>(chain.getBlocksInRow(0, 0).size()) == 1, "side A has one block");
+    check(static_cast<int>(chain.getBlocksInRow(0, 1).size()) == 1, "side B has one block");
+
+    check(render(chain, 16), "split renders sanely with both sides populated");
+
+    // The stage costs the longest row, not the sum: the rows run in parallel.
+    const int rowBLatency = chain.getBlocksInRow(0, 1).front()->getLatencySamples();
+    std::printf("       side B latency %d smp, chain reports %d smp\n", rowBLatency,
+                chain.getLatencySamples());
+    check(chain.getLatencySamples() == rowBLatency,
+          "a split costs its longest row, not the sum of both");
+
+    // Both blocks should see signal, which is what proves the split fans out
+    // rather than feeding one side only.
+    check(chain.getBlocksInRow(0, 0).front()->getOutputLevel() > 0.0f, "side A processed audio");
+    check(chain.getBlocksInRow(0, 1).front()->getOutputLevel() > 0.0f, "side B processed audio");
+
+    // Moving a block across to the other side.
+    const auto uidA = chain.getBlocksInRow(0, 0).front()->getUid();
+    chain.moveBlock(uidA, blockrig::BlockPosition{0, 1, 0});
+    check(chain.getBlocksInRow(0, 1).size() == 2, "a block can be dragged to the other side");
+    check(chain.getBlocksInRow(0, 0).empty(), "and leaves the side it came from");
+    check(render(chain, 8), "renders after moving between sides");
+
+    // Merging keeps side A and discards side B.
+    check(chain.mergeStage(0), "stage merges back");
+    check(!chain.isStageSplit(0), "no longer split");
+    check(chain.getNumRows(0) == 1, "one row again");
+    check(render(chain, 8), "renders after merging");
+
+    // Row gain and pan are settable and readable.
+    chain.setRowGainDb(0, 0, -6.0f);
+    chain.setRowPan(0, 0, 0.5f);
+    check(std::abs(chain.getRowGainDb(0, 0) + 6.0f) < 0.01f, "row gain round-trips");
+    check(std::abs(chain.getRowPan(0, 0) - 0.5f) < 0.01f, "row pan round-trips");
+    check(render(chain, 8), "renders with row gain and pan applied");
 }
 
 void testMixedFormatChain()
@@ -387,8 +463,8 @@ void testMixedFormatChain()
     if (vst3Block == nullptr || auBlock == nullptr)
         return;
 
-    chain.insertBlock(std::move(vst3Block), 0);
-    chain.insertBlock(std::move(auBlock), 1);
+    chain.insertBlock(std::move(vst3Block), blockrig::BlockPosition{0, 0, 0});
+    chain.insertBlock(std::move(auBlock), blockrig::BlockPosition{1, 0, 0});
 
     check(render(chain, 16), "AU and VST3 render together in one chain");
     check(chain.getNumBlocks() == 2, "both formats coexist in the lane");
@@ -418,7 +494,7 @@ void testNamBlock(const juce::File& modelsDir)
     if (namProcessor == nullptr)
         return;
 
-    chain.insertBlock(std::move(block), 0);
+    chain.insertBlock(std::move(block), blockrig::BlockPosition{0, 0, 0});
 
     // With no capture loaded the block must pass the lane through, not silence it.
     float magnitude = 0.0f;
@@ -504,6 +580,7 @@ int main(int argc, char** argv)
     testCpuAttribution();
     testEditsWhileRendering();
     testMixedFormatChain();
+    testParallelSplit();
     testNamBlock(modelsDir);
 
     std::printf("\n%s (%d failure%s)\n", gFailures == 0 ? "ALL CHECKS PASSED" : "CHECKS FAILED", gFailures,

@@ -52,14 +52,19 @@ public:
     BlockChain& getChain() { return mChain; }
     PluginCatalog& getCatalog() { return mCatalog; }
 
-    /// Instantiates a plug-in and inserts it at `index`. Asynchronous because
+    /// Instantiates a plug-in and inserts it at `position`. Asynchronous because
     /// AUv3 cannot be created synchronously, and because a slow plug-in must not
     /// freeze the UI. `onFinished` reports the new block's uid, or an error.
-    void addBlock(const juce::PluginDescription& description, int index,
+    void addBlock(const juce::PluginDescription& description, BlockPosition position,
                   std::function<void(juce::String uid, juce::String error)> onFinished = {});
 
     void removeBlock(const juce::String& uid);
-    void moveBlock(const juce::String& uid, int newIndex);
+    void moveBlock(const juce::String& uid, BlockPosition position);
+
+    /// Splits a stage into two parallel rows (side A above, side B below) or
+    /// collapses it back to one. This is how dual-amp rigs are built.
+    void splitStage(int stageIndex);
+    void mergeStage(int stageIndex);
 
     /// Called on the message thread whenever the lane changes.
     std::function<void()> onChainChanged;
