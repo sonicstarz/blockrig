@@ -518,7 +518,11 @@ private:
         // advice until the numbers back it.
         else if (fragment.isNotEmpty())
         {
-            const auto types = mProcessor->getCatalog().getKnownPluginList().getTypes();
+            // Built-ins live in their own list, not the scanned catalogue -
+            // without them "NAM" silently matched the old NAM Modeler VST3.
+            auto types = mProcessor->getCatalog().getKnownPluginList().getTypes();
+            for (const auto& builtIn : mProcessor->getCatalog().getBuiltIns())
+                types.insert(0, builtIn);
             juce::StringArray wanted;
             wanted.addTokens(fragment, ",", "");
             wanted.trim();
@@ -530,10 +534,19 @@ private:
             {
                 bool found = false;
 
+                // Exact name first: "NAM" must find the built-in NAM block, not
+                // the old "NAM Modeler" plug-in that happens to contain it.
+                juce::Array<juce::PluginDescription> ordered;
                 for (const auto& description : types)
+                    if (description.name.equalsIgnoreCase(want))
+                        ordered.add(description);
+                for (const auto& description : types)
+                    if (!description.name.equalsIgnoreCase(want)
+                        && description.name.containsIgnoreCase(want))
+                        ordered.add(description);
+
+                for (const auto& description : ordered)
                 {
-                    if (!description.name.containsIgnoreCase(want))
-                        continue;
 
                     std::printf("Adding %s\n", description.name.toRawUTF8());
                     mProcessor->addBlock(description, BlockPosition{stage, 0, 0, true});

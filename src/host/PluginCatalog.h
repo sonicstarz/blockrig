@@ -35,6 +35,10 @@ public:
 
     juce::AudioPluginFormatManager& getFormatManager() { return mFormats; }
     juce::KnownPluginList& getKnownPluginList() { return mKnownPlugins; }
+
+    /// Built-in blocks (the NAM). Kept out of the scanned list so a rescan can
+    /// never denylist them, but anything enumerating "what can I add" needs both.
+    const juce::Array<juce::PluginDescription>& getBuiltIns() const { return mBuiltIns; }
     const juce::KnownPluginList& getKnownPluginList() const { return mKnownPlugins; }
 
     /// Descriptions of the built-in blocks, which never need scanning.

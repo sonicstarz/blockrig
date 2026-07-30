@@ -6,6 +6,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "blocks/nam/CaptureLibrary.h"
+#include "host/ProcessorTraits.h"
 #include "dsp/AmpSlot.h"
 #include "dsp/ModelLoader.h"
 #include "dsp/NoiseGate.h"
@@ -22,6 +23,7 @@ namespace blockrig
 /// differs is scope: this is a single amp voice, because routing now belongs to
 /// the lane. Two amps means two blocks.
 class NamBlockProcessor final : public juce::AudioPluginInstance
+                              , public WidthNeutralProcessor
 {
 public:
     /// Identifiers used by InternalBlockFormat and the rig schema.

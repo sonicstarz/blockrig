@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include "host/BlockInstance.h"
 
+#include "host/ProcessorTraits.h"
+
 namespace blockrig
 {
 
@@ -97,7 +99,14 @@ void BlockInstance::prepare(double sampleRate, int maxBlockSize, bool sourceIsMo
 
     mNegotiatedIns = mPlugin->getTotalNumInputChannels();
     mNegotiatedOuts = mPlugin->getTotalNumOutputChannels();
-    mProducesStereo = mNegotiatedOuts >= 2;
+
+    // Two output channels end the "fed mono" run for everything downstream -
+    // unless the block only duplicates. A width-neutral block (the NAM: same
+    // model on both sides) fed mono emits two identical channels, and treating
+    // that as stereo re-creates exactly the symmetric-ping-pong bug one block
+    // later.
+    mProducesStereo = mNegotiatedOuts >= 2
+                   && dynamic_cast<const WidthNeutralProcessor*>(mPlugin.get()) == nullptr;
 
     if (mMonoOnly)
         mMonoScratch.setSize(juce::jmax(1, mPlugin->getTotalNumOutputChannels()), maxBlockSize, false, true, true);
