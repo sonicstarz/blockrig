@@ -333,6 +333,12 @@ PluginCatalog::ScanSummary PluginCatalog::scanAllFormats(std::function<void(cons
         mScanner->resetCounts();
     }
 
+    // Reaching here means nothing crashed, so the pedal has done its job. Leaving
+    // the last-probed plug-in named in it would denylist a perfectly good plug-in
+    // on the next launch — observed with the final plug-in of a completed scan.
+    if (getDeadMansPedalFile().existsAsFile())
+        getDeadMansPedalFile().replaceWithText({});
+
     saveToStorage();
     return summary;
 }
