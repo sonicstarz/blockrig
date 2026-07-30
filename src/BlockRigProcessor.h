@@ -7,6 +7,7 @@
 
 #include "host/BlockChain.h"
 #include "host/PluginCatalog.h"
+#include "host/Transport.h"
 
 namespace blockrig
 {
@@ -51,6 +52,7 @@ public:
 
     BlockChain& getChain() { return mChain; }
     PluginCatalog& getCatalog() { return mCatalog; }
+    Transport& getTransport() { return mTransport; }
 
     /// Instantiates a plug-in and inserts it at `position`. Asynchronous because
     /// AUv3 cannot be created synchronously, and because a slow plug-in must not
@@ -112,6 +114,7 @@ private:
 
     BlockChain mChain;
     PluginCatalog mCatalog;
+    Transport mTransport;
 
     InputMode mInputMode = InputMode::mono;
     float mInputGainDb = 0.0f;

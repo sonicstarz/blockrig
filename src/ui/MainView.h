@@ -8,6 +8,7 @@
 #include "BlockRigProcessor.h"
 #include "ui/CpuMeter.h"
 #include "ui/HeaderMeters.h"
+#include "ui/TransportBar.h"
 #include "ui/LaneView.h"
 #include "ui/PluginEditorWindows.h"
 #include "ui/Theme.h"
@@ -52,6 +53,7 @@ private:
     juce::Label mTitle;
     CpuMeter mCpuMeter;
     HeaderMeters mHeaderMeters;
+    TransportBar mTransportBar;
     juce::TextButton mSettingsButton{"Settings"};
 
     /// Big and always reachable: an app that opens a live input into a live
@@ -94,9 +96,11 @@ private:
     /// The bottom section: tabbed, and resizable by dragging the bar above it.
     juce::TabbedComponent mTabs{juce::TabbedButtonBar::TabsAtTop};
     PanelHolder mBlockTab;
+    PanelHolder mSplitTab;
     PanelHolder mInputTab;
     PanelHolder mOutputTab;
     juce::Label mPanelPlaceholder;
+    juce::Label mSplitPlaceholder;
 
     juce::StretchableLayoutManager mLayout;
     std::unique_ptr<juce::StretchableLayoutResizerBar> mResizer;

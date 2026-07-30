@@ -388,40 +388,56 @@ void testParallelSplit()
     check(chain.isStageSplit(0), "stage reports itself split");
     check(chain.getNumRows(0) == 2, "the split has two rows");
 
-    // Both sides default to centre so the split rejoins in true stereo. Hard
-    // panning them would collapse every stereo plug-in in the rig to one speaker.
-    check(std::abs(chain.getRowPan(0, 0)) < 0.01f, "side A defaults centred");
-    check(std::abs(chain.getRowPan(0, 1)) < 0.01f, "side B defaults centred");
+    // A split is dual mono by default: side A is the left channel, side B the
+    // right, which is the two-amp rig people build splits for.
+    check(chain.getStageMode(0) == blockrig::BlockChain::StageMode::dualMono, "splits default to dual mono");
 
-    // The real requirement: a stereo signal must still be stereo after rejoining.
+    // The behaviour that matters: turning one side down must change only that
+    // side of the output. Anything else means the sides are not independent.
     {
-        blockrig::BlockChain stereoCheck;
-        stereoCheck.prepare(kSampleRate, kBlockSize);
-        stereoCheck.insertBlock(makeBlock(*delay), blockrig::BlockPosition{0, 0, 0});
-        stereoCheck.splitStage(0);
+        blockrig::BlockChain sides;
+        sides.prepare(kSampleRate, kBlockSize);
+        sides.insertBlock(makeBlock(*delay), blockrig::BlockPosition{0, 0, 0});
+        sides.splitStage(0);
+        sides.insertBlock(makeBlock(*delay), blockrig::BlockPosition{0, 1, 0});
 
-        juce::AudioBuffer<float> buffer(2, kBlockSize);
-        juce::MidiBuffer midi;
+        const auto measure = [&sides](float* leftOut, float* rightOut) {
+            juce::AudioBuffer<float> buffer(2, kBlockSize);
+            juce::MidiBuffer midi;
+            float left = 0.0f, right = 0.0f;
 
-        // Distinct content per side: left tone, right silence.
-        for (int block = 0; block < 8; ++block)
-        {
-            buffer.clear();
-            auto* left = buffer.getWritePointer(0);
-            for (int i = 0; i < kBlockSize; ++i)
-                left[i] = 0.5f * std::sin(0.05f * static_cast<float>(i));
+            for (int block = 0; block < 12; ++block)
+            {
+                fillSine(buffer, block * kBlockSize);
+                midi.clear();
+                sides.process(buffer, midi);
 
-            midi.clear();
-            stereoCheck.process(buffer, midi);
-        }
+                if (block >= 8)
+                {
+                    left = juce::jmax(left, buffer.getMagnitude(0, 0, kBlockSize));
+                    right = juce::jmax(right, buffer.getMagnitude(1, 0, kBlockSize));
+                }
+            }
 
-        const auto leftLevel = buffer.getMagnitude(0, 0, kBlockSize);
-        const auto rightLevel = buffer.getMagnitude(1, 0, kBlockSize);
-        std::printf("       after rejoin: left %.4f, right %.4f\n", leftLevel, rightLevel);
+            *leftOut = left;
+            *rightOut = right;
+        };
 
-        check(leftLevel > 0.05f, "left content survives the split and rejoin");
-        check(rightLevel < leftLevel * 0.5f,
-              "right stays distinct from left — the rejoin is stereo, not collapsed");
+        float baseLeft = 0.0f, baseRight = 0.0f;
+        measure(&baseLeft, &baseRight);
+        std::printf("       balanced: left %.4f, right %.4f\n", baseLeft, baseRight);
+        check(baseLeft > 0.02f && baseRight > 0.02f, "both sides reach the output");
+
+        // Pull side A right down.
+        sides.setRowGainDb(0, 0, -40.0f);
+
+        float quietA = 0.0f, untouchedB = 0.0f;
+        measure(&quietA, &untouchedB);
+        std::printf("       A at -40 dB: left %.4f, right %.4f\n", quietA, untouchedB);
+
+        check(quietA < baseLeft * 0.25f, "turning side A down drops the left channel");
+        check(std::abs(untouchedB - baseRight) < baseRight * 0.25f + 0.005f,
+              "and leaves the right channel alone — the sides are independent");
     }
 
     float magnitude = 0.0f;

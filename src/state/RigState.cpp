@@ -74,10 +74,12 @@ public:
 
     SequentialRestore(BlockRigProcessor& processor, std::vector<SavedBlock> blocks,
                       std::vector<std::tuple<int, int, float, float>> rowSettings,
+                      std::vector<std::pair<int, juce::String>> stageModes,
                       std::function<void(RestoreResult)> onFinished)
         : mProcessor(processor)
         , mBlocks(std::move(blocks))
         , mRowSettings(std::move(rowSettings))
+        , mStageModes(std::move(stageModes))
         , mOnFinished(std::move(onFinished))
     {
         mResult.blocksRequested = static_cast<int>(mBlocks.size());
@@ -100,6 +102,10 @@ private:
                 chain.setRowGainDb(stageIndex, rowIndex, gainDb);
                 chain.setRowPan(stageIndex, rowIndex, pan);
             }
+
+            for (const auto& [stageIndex, mode] : mStageModes)
+                chain.setStageMode(stageIndex, mode == "parallel" ? BlockChain::StageMode::parallel
+                                                                  : BlockChain::StageMode::dualMono);
 
             if (mOnFinished)
                 mOnFinished(mResult);
@@ -164,6 +170,7 @@ private:
     BlockRigProcessor& mProcessor;
     std::vector<SavedBlock> mBlocks;
     std::vector<std::tuple<int, int, float, float>> mRowSettings;
+    std::vector<std::pair<int, juce::String>> mStageModes;
     std::function<void(RestoreResult)> mOnFinished;
     RestoreResult mResult;
     int mIndex = 0;
@@ -188,6 +195,13 @@ juce::ValueTree toValueTree(BlockRigProcessor& processor)
     output.setProperty(ids::gainDb, processor.getOutputGainDb(), nullptr);
     rig.appendChild(output, nullptr);
 
+    juce::ValueTree transport("Transport");
+    transport.setProperty("bpm", processor.getTransport().getBpm(), nullptr);
+    transport.setProperty("timeSigNumerator", processor.getTransport().getTimeSignatureNumerator(), nullptr);
+    transport.setProperty("timeSigDenominator", processor.getTransport().getTimeSignatureDenominator(),
+                          nullptr);
+    rig.appendChild(transport, nullptr);
+
     // Stage per chain stage, Row per parallel path. A split writes two rows.
     juce::ValueTree lane(ids::lane);
     auto& chain = processor.getChain();
@@ -195,6 +209,10 @@ juce::ValueTree toValueTree(BlockRigProcessor& processor)
     for (int stageIndex = 0; stageIndex < chain.getNumStages(); ++stageIndex)
     {
         juce::ValueTree stage(ids::stage);
+        stage.setProperty("mode", chain.getStageMode(stageIndex) == BlockChain::StageMode::dualMono
+                                      ? "dualMono"
+                                      : "parallel",
+                          nullptr);
 
         for (int rowIndex = 0; rowIndex < chain.getNumRows(stageIndex); ++rowIndex)
         {
@@ -250,14 +268,24 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
     if (output.isValid())
         processor.setOutputGainDb(static_cast<float>(output.getProperty(ids::gainDb, 0.0)));
 
+    if (const auto transport = rig.getChildWithName("Transport"); transport.isValid())
+    {
+        processor.getTransport().setBpm(static_cast<double>(transport.getProperty("bpm", 120.0)));
+        processor.getTransport().setTimeSignature(
+            static_cast<int>(transport.getProperty("timeSigNumerator", 4)),
+            static_cast<int>(transport.getProperty("timeSigDenominator", 4)));
+    }
+
     // Collect the saved lane before touching the live one.
     std::vector<SequentialRestore::SavedBlock> saved;
     std::vector<std::tuple<int, int, float, float>> rowSettings; // stage, row, gain, pan
+    std::vector<std::pair<int, juce::String>> stageModes;
     const auto lane = rig.getChildWithName(ids::lane);
 
     for (int stageIndex = 0; stageIndex < lane.getNumChildren(); ++stageIndex)
     {
         const auto stage = lane.getChild(stageIndex);
+        stageModes.emplace_back(stageIndex, stage.getProperty("mode", "dualMono").toString());
 
         for (int rowIndex = 0; rowIndex < stage.getNumChildren(); ++rowIndex)
         {
@@ -297,8 +325,8 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
 
     processor.getChain().clear();
 
-    auto sequence = std::make_shared<SequentialRestore>(processor, std::move(saved),
-                                                       std::move(rowSettings), std::move(onFinished));
+    auto sequence = std::make_shared<SequentialRestore>(processor, std::move(saved), std::move(rowSettings),
+                                                       std::move(stageModes), std::move(onFinished));
     sequence->start();
 }
 

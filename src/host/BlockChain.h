@@ -47,6 +47,19 @@ public:
 
     static constexpr int kMaxRowsPerStage = 2;
 
+    /// How a split's two rows recombine.
+    enum class StageMode
+    {
+        /// A becomes the left channel, B the right: two amps forming a stereo
+        /// pair. Each row is summed to mono and placed on its own side, so the
+        /// result is genuinely stereo rather than the same signal twice.
+        dualMono = 0,
+
+        /// Both rows see the full stereo signal and are summed, each keeping its
+        /// own image. For blending two treatments of the same part.
+        parallel = 1
+    };
+
     /// One parallel row inside a rendered stage.
     struct RenderRow
     {
@@ -67,6 +80,7 @@ public:
     {
         std::vector<RenderRow> rows;
         int latency = 0; ///< the longest row, which is what the stage costs
+        StageMode mode = StageMode::dualMono;
     };
 
     struct Snapshot
@@ -101,10 +115,17 @@ public:
     /// blocks. Returns false if the stage was not split.
     bool mergeStage(int stageIndex);
 
+    void setStageMode(int stageIndex, StageMode mode);
+    StageMode getStageMode(int stageIndex) const;
+
     void setRowGainDb(int stageIndex, int rowIndex, float gainDb);
     void setRowPan(int stageIndex, int rowIndex, float pan);
     float getRowGainDb(int stageIndex, int rowIndex) const;
     float getRowPan(int stageIndex, int rowIndex) const;
+
+    /// Applied to every block, now and as new ones arrive, so hosted plug-ins can
+    /// sync to the rig's tempo.
+    void setPlayHead(juce::AudioPlayHead* playHead);
 
     void collectGarbage();
     bool refreshLatency();
@@ -152,6 +173,7 @@ private:
     struct LaneStage
     {
         std::vector<LaneRow> rows{1};
+        StageMode mode = StageMode::dualMono;
     };
 
     void publishSnapshot();
@@ -172,6 +194,7 @@ private:
     juce::AbstractFifo mRetireFifo{kRetireCapacity};
     std::array<Snapshot*, kRetireCapacity> mRetireSlots{};
 
+    juce::AudioPlayHead* mPlayHead = nullptr;
     double mSampleRate = 48000.0;
     int mMaxBlockSize = 512;
     bool mPrepared = false;

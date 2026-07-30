@@ -249,6 +249,170 @@ private:
     juce::TextButton mTestTone;
 };
 
+/// Controls for a split stage: how the two sides recombine, and each side's own
+/// level and placement.
+///
+/// These did not exist before, so a user trying to balance the two sides of a
+/// split had only the blocks' own trims - which change what each side sounds
+/// like, not how much of it reaches the mix.
+class SplitPanel final : public juce::Component
+{
+public:
+    SplitPanel(BlockRigProcessor& processor, int stageIndex)
+        : mProcessor(processor)
+        , mStageIndex(stageIndex)
+    {
+        mTitle.setText("Parallel stage", juce::dontSendNotification);
+        mTitle.setFont(juce::FontOptions(15.0f, juce::Font::bold));
+        addAndMakeVisible(mTitle);
+
+        mModeLabel.setText("RECOMBINE", juce::dontSendNotification);
+        mModeLabel.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+        mModeLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        addAndMakeVisible(mModeLabel);
+
+        mMode.addItem("Dual mono - A left, B right", 1);
+        mMode.addItem("Parallel - both sides summed in stereo", 2);
+        mMode.setSelectedId(processor.getChain().getStageMode(stageIndex) == BlockChain::StageMode::dualMono
+                                ? 1
+                                : 2,
+                            juce::dontSendNotification);
+        mMode.onChange = [this] {
+            mProcessor.getChain().setStageMode(mStageIndex,
+                                               mMode.getSelectedId() == 1 ? BlockChain::StageMode::dualMono
+                                                                          : BlockChain::StageMode::parallel);
+            updateEnablement();
+        };
+        addAndMakeVisible(mMode);
+
+        for (int row = 0; row < 2; ++row)
+        {
+            auto& side = mSides[static_cast<size_t>(row)];
+
+            side.label.setText(row == 0 ? "SIDE A" : "SIDE B", juce::dontSendNotification);
+            side.label.setFont(juce::FontOptions(10.5f, juce::Font::bold));
+            side.label.setColour(juce::Label::textColourId, theme::colours::accent);
+            addAndMakeVisible(side.label);
+
+            side.gainLabel.setText("LEVEL", juce::dontSendNotification);
+            side.gainLabel.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+            side.gainLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
+            addAndMakeVisible(side.gainLabel);
+
+            side.gain.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+            side.gain.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 62, 15);
+            side.gain.setRange(-40.0, 12.0, 0.1);
+            side.gain.setValue(processor.getChain().getRowGainDb(stageIndex, row),
+                               juce::dontSendNotification);
+            side.gain.textFromValueFunction = [](double v) { return juce::String(v, 1) + " dB"; };
+            side.gain.onValueChange = [this, row] {
+                mProcessor.getChain().setRowGainDb(mStageIndex, row,
+                                                   static_cast<float>(mSides[static_cast<size_t>(row)]
+                                                                          .gain.getValue()));
+            };
+            addAndMakeVisible(side.gain);
+
+            side.panLabel.setText("PAN", juce::dontSendNotification);
+            side.panLabel.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+            side.panLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
+            addAndMakeVisible(side.panLabel);
+
+            side.pan.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+            side.pan.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 62, 15);
+            side.pan.setRange(-1.0, 1.0, 0.01);
+            side.pan.setValue(processor.getChain().getRowPan(stageIndex, row), juce::dontSendNotification);
+            side.pan.textFromValueFunction = [](double v) {
+                if (std::abs(v) < 0.005)
+                    return juce::String("C");
+                return (v < 0.0 ? juce::String("L") : juce::String("R"))
+                       + juce::String(juce::roundToInt(std::abs(v) * 100.0));
+            };
+            side.pan.onValueChange = [this, row] {
+                mProcessor.getChain().setRowPan(mStageIndex, row,
+                                                 static_cast<float>(mSides[static_cast<size_t>(row)]
+                                                                        .pan.getValue()));
+            };
+            addAndMakeVisible(side.pan);
+        }
+
+        mHint.setFont(juce::FontOptions(11.0f));
+        mHint.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        addAndMakeVisible(mHint);
+
+        updateEnablement();
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(theme::metrics::padding);
+
+        auto header = area.removeFromTop(24);
+        mTitle.setBounds(header.removeFromLeft(160));
+
+        area.removeFromTop(6);
+        auto modeRow = area.removeFromTop(40);
+        mModeLabel.setBounds(modeRow.removeFromTop(13));
+        mMode.setBounds(modeRow.removeFromTop(26).withWidth(juce::jmin(320, modeRow.getWidth())));
+
+        area.removeFromTop(theme::metrics::gap);
+        mHint.setBounds(area.removeFromBottom(18));
+
+        for (auto& side : mSides)
+        {
+            auto row = area.removeFromTop(78);
+            side.label.setBounds(row.removeFromLeft(64).withSizeKeepingCentre(64, 20));
+
+            auto gainCell = row.removeFromLeft(84);
+            side.gainLabel.setBounds(gainCell.removeFromTop(13));
+            side.gain.setBounds(gainCell);
+
+            auto panCell = row.removeFromLeft(84);
+            side.panLabel.setBounds(panCell.removeFromTop(13));
+            side.pan.setBounds(panCell);
+        }
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        const auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+        g.setColour(theme::colours::panel);
+        g.fillRoundedRectangle(bounds, theme::metrics::cornerRadius);
+        g.setColour(theme::colours::outline);
+        g.drawRoundedRectangle(bounds, theme::metrics::cornerRadius, 1.0f);
+    }
+
+private:
+    void updateEnablement()
+    {
+        const bool dualMono = mProcessor.getChain().getStageMode(mStageIndex)
+                              == BlockChain::StageMode::dualMono;
+
+        // In dual mono the sides *are* the channels, so a pan control would be
+        // lying about what it does.
+        for (auto& side : mSides)
+        {
+            side.pan.setEnabled(!dualMono);
+            side.panLabel.setEnabled(!dualMono);
+        }
+
+        mHint.setText(dualMono ? "Side A feeds the left channel, side B the right."
+                               : "Both sides receive the full stereo signal and are summed.",
+                      juce::dontSendNotification);
+    }
+
+    struct Side
+    {
+        juce::Label label, gainLabel, panLabel;
+        juce::Slider gain, pan;
+    };
+
+    BlockRigProcessor& mProcessor;
+    int mStageIndex;
+    juce::Label mTitle, mModeLabel, mHint;
+    juce::ComboBox mMode;
+    std::array<Side, 2> mSides;
+};
+
 /// Runs a plug-in scan on its own thread behind a progress window.
 ///
 /// Scanning loads every plug-in on the machine in a child process and takes
@@ -431,6 +595,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     , mDeviceManager(deviceManager)
     , mCpuMeter(processor)
     , mHeaderMeters(processor)
+    , mTransportBar(processor)
     , mLane(processor, mEditorWindows)
 {
     setLookAndFeel(&mLook);
@@ -442,6 +607,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
 
     addAndMakeVisible(mCpuMeter);
     addAndMakeVisible(mHeaderMeters);
+    addAndMakeVisible(mTransportBar);
 
     // Muted at startup: opening a live input into a live output can howl before
     // the user has done anything, and they need one obvious way to stop it.
@@ -632,12 +798,26 @@ void MainView::updatePanel()
     }
 
     mBlockTab.setPanel(std::move(panel));
-    mTabs.setCurrentTabIndex(0);
+
+    // The Split tab follows the selection: it only means anything for a block
+    // that is actually on one side of a split.
+    const auto position = mProcessor.getChain().findBlock(uid);
+    const bool inSplit = position.has_value() && mProcessor.getChain().isStageSplit(position->stage);
+
+    if (inSplit)
+        mSplitTab.setPanel(std::make_unique<SplitPanel>(mProcessor, position->stage));
+    else
+        mSplitTab.setPanel(nullptr);
+
+    mTabs.setTabBackgroundColour(1, inSplit ? theme::colours::panel : theme::colours::background);
+
+    if (mTabs.getCurrentTabIndex() != 1 || !inSplit)
+        mTabs.setCurrentTabIndex(0);
 }
 
 void MainView::showIoPanel(EndBlock::Kind kind)
 {
-    mTabs.setCurrentTabIndex(kind == EndBlock::Kind::input ? 1 : 2);
+    mTabs.setCurrentTabIndex(kind == EndBlock::Kind::input ? 2 : 3);
 }
 
 void MainView::buildTabs()
@@ -650,11 +830,18 @@ void MainView::buildTabs()
     // Block first, since it is what the lane selection drives; the ends are
     // parked alongside so the user can leave them open while playing.
     mTabs.addTab("Block", theme::colours::panel, &mBlockTab, false);
+    mTabs.addTab("Split", theme::colours::panel, &mSplitTab, false);
     mTabs.addTab("Input", theme::colours::panel, &mInputTab, false);
     mTabs.addTab("Output", theme::colours::panel, &mOutputTab, false);
 
     mInputTab.setPanel(std::make_unique<IoPanel>(mProcessor, EndBlock::Kind::input, mDeviceManager));
     mOutputTab.setPanel(std::make_unique<IoPanel>(mProcessor, EndBlock::Kind::output, mDeviceManager));
+
+    mSplitPlaceholder.setText("Select a block on a split stage to balance its two sides.",
+                              juce::dontSendNotification);
+    mSplitPlaceholder.setJustificationType(juce::Justification::centred);
+    mSplitPlaceholder.setColour(juce::Label::textColourId, theme::colours::textFaint);
+    mSplitTab.addAndMakeVisible(mSplitPlaceholder);
 
     addAndMakeVisible(mTabs);
 
@@ -799,9 +986,11 @@ void MainView::resized()
 
     mSettingsButton.setBounds(header.removeFromRight(88).withSizeKeepingCentre(88, 26));
     header.removeFromRight(theme::metrics::gap);
-    mCpuMeter.setBounds(header.removeFromRight(130).withSizeKeepingCentre(130, 30));
+    mCpuMeter.setBounds(header.removeFromRight(126).withSizeKeepingCentre(126, 30));
     header.removeFromRight(theme::metrics::gap);
-    mPluginCountButton.setBounds(header.removeFromRight(116).withSizeKeepingCentre(116, 26));
+    mPluginCountButton.setBounds(header.removeFromRight(110).withSizeKeepingCentre(110, 26));
+    header.removeFromRight(theme::metrics::gap);
+    mTransportBar.setBounds(header.removeFromRight(214).withSizeKeepingCentre(214, 38));
 
     area.removeFromTop(theme::metrics::gap);
     area = area.reduced(theme::metrics::padding, 0);

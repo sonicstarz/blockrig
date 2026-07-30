@@ -85,6 +85,17 @@ int BlockChain::getNumRows(int stageIndex) const
     return static_cast<int>(mLane[static_cast<size_t>(stageIndex)].rows.size());
 }
 
+void BlockChain::setPlayHead(juce::AudioPlayHead* playHead)
+{
+    mPlayHead = playHead;
+
+    for (auto& stage : mLane)
+        for (auto& row : stage.rows)
+            for (auto& block : row.blocks)
+                if (auto* plugin = block->getPlugin())
+                    plugin->setPlayHead(playHead);
+}
+
 void BlockChain::insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition position)
 {
     if (block == nullptr)
@@ -92,6 +103,11 @@ void BlockChain::insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition
 
     if (mPrepared)
         block->prepare(mSampleRate, mMaxBlockSize);
+
+    // New blocks need the tempo too, or a synced delay added mid-session runs
+    // free while everything around it stays in time.
+    if (auto* plugin = block->getPlugin())
+        plugin->setPlayHead(mPlayHead);
 
     // Past the end of the lane means "make a new stage here", as does an explicit
     // request for one.
@@ -215,10 +231,11 @@ bool BlockChain::splitStage(int stageIndex)
     if (static_cast<int>(stage.rows.size()) >= kMaxRowsPerStage)
         return false;
 
-    // Both paths stay centred, so the split rejoins in true stereo and each path
-    // keeps whatever image its plug-ins produce. Hard-panning the sides would
-    // collapse every stereo plug-in in the rig to one speaker.
+    // Dual mono by default: A on the left, B on the right, which is the two-amp
+    // rig people build splits for. Panning stays neutral because the mode, not a
+    // pan control, is what places each side.
     stage.rows.front().pan = 0.0f;
+    stage.mode = StageMode::dualMono;
 
     LaneRow rowB;
     rowB.pan = 0.0f;
@@ -250,6 +267,24 @@ bool BlockChain::mergeStage(int stageIndex)
     publishSnapshot();
     collectGarbage();
     return true;
+}
+
+void BlockChain::setStageMode(int stageIndex, StageMode mode)
+{
+    if (!juce::isPositiveAndBelow(stageIndex, static_cast<int>(mLane.size())))
+        return;
+
+    mLane[static_cast<size_t>(stageIndex)].mode = mode;
+    publishSnapshot();
+    collectGarbage();
+}
+
+BlockChain::StageMode BlockChain::getStageMode(int stageIndex) const
+{
+    if (!juce::isPositiveAndBelow(stageIndex, static_cast<int>(mLane.size())))
+        return StageMode::dualMono;
+
+    return mLane[static_cast<size_t>(stageIndex)].mode;
 }
 
 void BlockChain::setRowGainDb(int stageIndex, int rowIndex, float gainDb)
@@ -383,6 +418,7 @@ void BlockChain::publishSnapshot()
     for (const auto& laneStage : mLane)
     {
         RenderStage stage;
+        stage.mode = laneStage.mode;
         stage.rows.reserve(laneStage.rows.size());
 
         for (const auto& laneRow : laneStage.rows)
@@ -556,10 +592,24 @@ void BlockChain::processStage(RenderStage& stage, juce::AudioBuffer<float>& buff
         const float leftGain = row.gainLinear * row.panLeft;
         const float rightGain = row.gainLinear * row.panRight;
 
-        // Centre means "leave the stereo image alone": each side of the row goes
-        // to its own side of the sum. Only an actual pan setting steers it.
-        if (std::abs(row.panLeft - row.panRight) < 1.0e-4f)
+        if (stage.mode == StageMode::dualMono)
         {
+            // A is the left channel, B is the right. Each row is summed to mono
+            // first, so a stereo plug-in on one side does not leak into the
+            // other; the pair of rows is what makes the result stereo.
+            const int side = juce::jlimit(0, numChannels - 1, static_cast<int>(rowIndex));
+            const float gain = row.gainLinear;
+
+            auto* destination = mAccumulator.getWritePointer(side);
+            const auto* left = work.getReadPointer(0);
+            const auto* right = work.getReadPointer(juce::jmin(1, work.getNumChannels() - 1));
+
+            for (int i = 0; i < numSamples; ++i)
+                destination[i] += gain * 0.5f * (left[i] + right[i]);
+        }
+        else if (std::abs(row.panLeft - row.panRight) < 1.0e-4f)
+        {
+            // Parallel and centred: leave each row's stereo image alone.
             const float gain = row.gainLinear * row.panLeft;
 
             for (int channel = 0; channel < numChannels; ++channel)
@@ -568,7 +618,7 @@ void BlockChain::processStage(RenderStage& stage, juce::AudioBuffer<float>& buff
         }
         else
         {
-            // Panned: collapse the row and steer it, which is what a pan means.
+            // Parallel and panned: collapse the row and steer it.
             if (numChannels >= 1)
                 mAccumulator.addFrom(0, 0, work, 0, 0, numSamples, leftGain);
             if (numChannels >= 2)

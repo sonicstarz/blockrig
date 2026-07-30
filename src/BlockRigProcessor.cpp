@@ -43,6 +43,7 @@ BlockRigProcessor::BlockRigProcessor()
                                .withOutput("Output", juce::AudioChannelSet::stereo(), true))
 {
     mCatalog.loadFromStorage();
+    mChain.setPlayHead(&mTransport);
     mLatencyPoller = std::make_unique<LatencyPoller>(*this);
 
     // SmoothedValue starts at 0, so if a processBlock ever arrives before
@@ -62,7 +63,9 @@ BlockRigProcessor::~BlockRigProcessor()
 
 void BlockRigProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    mTransport.prepare(sampleRate);
     mChain.prepare(sampleRate, samplesPerBlock);
+    mChain.setPlayHead(&mTransport);
 
     mInputGain.reset(sampleRate, static_cast<double>(kSmoothingSeconds));
     mOutputGain.reset(sampleRate, static_cast<double>(kSmoothingSeconds));
@@ -128,6 +131,22 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     if (numSamples <= 0)
         return;
+
+    // Inside a DAW the host owns the tempo, so mirror it and let our own clock
+    // idle; standalone there is no other source, so we run the clock ourselves.
+    if (auto* hostPlayHead = getPlayHead())
+    {
+        if (const auto hostPosition = hostPlayHead->getPosition())
+            mTransport.followHost(*hostPosition);
+        else
+            mTransport.setFollowingHost(false);
+    }
+    else
+    {
+        mTransport.setFollowingHost(false);
+    }
+
+    mTransport.advance(numSamples);
 
     // The input end of the lane. Mono is the guitarist's case: one channel feeds
     // the whole (stereo) lane, so effects downstream can widen it.

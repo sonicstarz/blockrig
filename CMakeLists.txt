@@ -137,6 +137,7 @@ set(BLOCKRIG_SOURCES
     src/state/PluginState.cpp
     src/host/BlockChain.cpp
     src/host/BlockInstance.cpp
+    src/host/Transport.cpp
     src/host/PluginCatalog.cpp
     src/host/PluginScannerWorker.cpp
     src/host/InternalBlockFormat.cpp
@@ -148,6 +149,7 @@ set(BLOCKRIG_SOURCES
     src/ui/Theme.cpp
     src/ui/CpuMeter.cpp
     src/ui/HeaderMeters.cpp
+    src/ui/TransportBar.cpp
     src/ui/LaneView.cpp
     src/ui/BlockPicker.cpp
     src/ui/NamBlockPanel.cpp
@@ -293,6 +295,7 @@ if(NAMMODELER_BUILD_TESTS)
         tests/chain_tests.cpp
         src/host/BlockChain.cpp
         src/host/BlockInstance.cpp
+    src/host/Transport.cpp
         src/host/InternalBlockFormat.cpp
         src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
@@ -362,6 +365,7 @@ if(NAMMODELER_BUILD_TESTS)
         src/state/RigState.cpp
         src/host/BlockChain.cpp
         src/host/BlockInstance.cpp
+    src/host/Transport.cpp
         src/host/PluginCatalog.cpp
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
