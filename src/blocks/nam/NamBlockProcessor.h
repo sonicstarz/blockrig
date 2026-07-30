@@ -5,6 +5,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "blocks/nam/CaptureLibrary.h"
 #include "dsp/AmpSlot.h"
 #include "dsp/ModelLoader.h"
 #include "dsp/NoiseGate.h"
@@ -76,6 +77,8 @@ public:
     /// Called on the message thread when the loaded model or error changes.
     std::function<void()> onModelStateChanged;
 
+    CaptureLibrary& getCaptureLibrary() { return *mCaptureLibrary; }
+
     juce::AudioProcessorValueTreeState& getValueTreeState() { return mApvts; }
 
     float getInputLevel() const { return mInputLevel.load(std::memory_order_relaxed); }
@@ -97,6 +100,8 @@ private:
     nammodeler::ModelLoader mLoader;
 
     nammodeler::ModelInfo mModelInfo;
+    /// One library shared by every NAM block in the app.
+    juce::SharedResourcePointer<CaptureLibrary> mCaptureLibrary;
     juce::String mError;
 
     juce::AudioBuffer<float> mMono;

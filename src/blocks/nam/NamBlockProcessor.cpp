@@ -78,6 +78,17 @@ NamBlockProcessor::NamBlockProcessor()
 
     mLoader.onLoadFinished = [this](int, nammodeler::ModelInfo info, juce::String error) {
         mModelInfo = std::move(info);
+
+        // Anything that loads successfully joins the library, however it
+        // arrived - a file the user picked, or JSON embedded in a restored rig
+        // whose original file is long gone.
+        if (error.isEmpty() && mModelInfo.json.isNotEmpty())
+        {
+            if (const juce::File source(mModelInfo.path); source.existsAsFile())
+                mCaptureLibrary->addCapture(source);
+            else
+                mCaptureLibrary->addCaptureJson(mModelInfo.json, mModelInfo.name);
+        }
         mError = std::move(error);
         updateLatency();
 

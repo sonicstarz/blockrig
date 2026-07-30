@@ -35,6 +35,11 @@ NamBlockPanel::NamBlockPanel(NamBlockProcessor& processor)
     mCaptureDetails.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(mCaptureDetails);
 
+    mLibraryButton.setTooltip("Every capture you load is collected here automatically.");
+    mLibraryButton.onClick = [this] { showLibraryMenu(); };
+    addAndMakeVisible(mLibraryButton);
+
+    mLoadButton.setTooltip("Load a .nam file. It joins the library automatically.");
     mLoadButton.onClick = [this] { chooseCapture(); };
     addAndMakeVisible(mLoadButton);
 
@@ -92,6 +97,53 @@ void NamBlockPanel::addKnob(juce::Slider& slider, juce::Label& label, const juce
     styleCaption(label, caption);
     addAndMakeVisible(label);
     attachment = std::make_unique<SliderAttachment>(mProcessor.getValueTreeState(), paramId, slider);
+}
+
+void NamBlockPanel::showLibraryMenu()
+{
+    auto& library = mProcessor.getCaptureLibrary();
+    const auto entries = library.getEntries();
+
+    juce::PopupMenu menu;
+
+    if (entries.isEmpty())
+    {
+        menu.addItem(juce::PopupMenu::Item("No captures yet - load a .nam file and it will appear here")
+                         .setEnabled(false));
+    }
+    else
+    {
+        // Newest first: the capture someone just downloaded is the one they want.
+        const auto currentName = mProcessor.getModelInfo().name;
+        int id = 100;
+
+        for (const auto& entry : entries)
+            menu.addItem(juce::PopupMenu::Item(entry.name)
+                             .setID(id++)
+                             .setTicked(entry.name == currentName));
+    }
+
+    menu.addSeparator();
+    menu.addItem(1, "Open file...");
+    menu.addItem(2, "Show library folder");
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mLibraryButton),
+                       [this, entries](int choice) {
+        if (choice == 1)
+        {
+            chooseCapture();
+        }
+        else if (choice == 2)
+        {
+            mProcessor.getCaptureLibrary().getDirectory().revealToUser();
+        }
+        else if (choice >= 100)
+        {
+            const auto index = choice - 100;
+            if (index < entries.size())
+                mProcessor.loadModel(entries[index].file);
+        }
+    });
 }
 
 void NamBlockPanel::chooseCapture()
@@ -252,9 +304,10 @@ void NamBlockPanel::resized()
     header.removeFromLeft(30);  // glyph
     header.removeFromRight(86); // meters
 
-    auto buttons = header.removeFromRight(166);
-    mClearButton.setBounds(buttons.removeFromRight(56).reduced(2, 8));
-    mLoadButton.setBounds(buttons.removeFromRight(102).reduced(2, 8));
+    auto buttons = header.removeFromRight(232);
+    mClearButton.setBounds(buttons.removeFromRight(54).reduced(2, 8));
+    mLoadButton.setBounds(buttons.removeFromRight(74).reduced(2, 8));
+    mLibraryButton.setBounds(buttons.removeFromRight(84).reduced(2, 8));
 
     mCaptureName.setBounds(header.removeFromTop(22));
     mCaptureDetails.setBounds(header);

@@ -40,11 +40,15 @@ private:
     void chooseCapture();
     void addKnob(juce::Slider&, juce::Label&, const juce::String& caption, const char* paramId,
                  std::unique_ptr<SliderAttachment>&);
+    void showLibraryMenu();
 
     NamBlockProcessor& mProcessor;
 
     juce::Label mCaptureName, mCaptureDetails;
-    juce::TextButton mLoadButton{"Load capture"};
+    /// The library is the primary way to pick a capture once it has content;
+    /// the file chooser feeds it.
+    juce::TextButton mLibraryButton{"Library"};
+    juce::TextButton mLoadButton{"Open..."};
     juce::TextButton mClearButton{"Clear"};
 
     juce::Slider mInTrim, mBass, mMid, mTreble, mOutTrim, mCalDbu, mSlim, mGateThreshold;

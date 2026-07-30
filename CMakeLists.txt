@@ -90,6 +90,7 @@ set(BLOCKRIG_SOURCES
     src/host/PluginCatalog.cpp
     src/host/PluginScannerWorker.cpp
     src/host/InternalBlockFormat.cpp
+    src/blocks/nam/CaptureLibrary.cpp
     src/blocks/nam/NamBlockProcessor.cpp
     src/dsp/AmpSlot.cpp
     src/dsp/ToneStack.cpp
@@ -218,7 +219,8 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/BlockInstance.cpp
     src/host/Transport.cpp
         src/host/InternalBlockFormat.cpp
-        src/blocks/nam/NamBlockProcessor.cpp
+        src/blocks/nam/CaptureLibrary.cpp
+    src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
         src/dsp/ResamplingNam.cpp
@@ -252,7 +254,8 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginCatalog.cpp
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
-        src/blocks/nam/NamBlockProcessor.cpp
+        src/blocks/nam/CaptureLibrary.cpp
+    src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
         src/dsp/ResamplingNam.cpp
@@ -291,7 +294,8 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginCatalog.cpp
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
-        src/blocks/nam/NamBlockProcessor.cpp
+        src/blocks/nam/CaptureLibrary.cpp
+    src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
         src/dsp/ResamplingNam.cpp
