@@ -385,6 +385,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     : mProcessor(processor)
     , mDeviceManager(deviceManager)
     , mCpuMeter(processor)
+    , mHeaderMeters(processor)
     , mLane(processor, mEditorWindows)
 {
     setLookAndFeel(&mLook);
@@ -395,6 +396,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     addAndMakeVisible(mTitle);
 
     addAndMakeVisible(mCpuMeter);
+    addAndMakeVisible(mHeaderMeters);
 
     // Muted at startup: opening a live input into a live output can howl before
     // the user has done anything, and they need one obvious way to stop it.
@@ -631,9 +633,11 @@ void MainView::timerCallback()
 void MainView::refreshHeader()
 {
     const bool muted = mProcessor.isMuted();
-    mMuteButton.setButtonText(muted ? "MUTED" : "LIVE");
+    // Naming the action rather than the state: "MUTED" reads as a status label,
+    // and people sat waiting for sound that was never going to come.
+    mMuteButton.setButtonText(muted ? "MUTED - CLICK TO PLAY" : "LIVE - CLICK TO MUTE");
     mMuteButton.setColour(juce::TextButton::buttonColourId,
-                          muted ? theme::colours::bad.withAlpha(0.85f) : theme::colours::good.withAlpha(0.7f));
+                          muted ? theme::colours::bad.withAlpha(0.9f) : theme::colours::good.withAlpha(0.7f));
 
     const int count = mProcessor.getCatalog().getKnownPluginList().getNumTypes();
 
@@ -734,8 +738,9 @@ void MainView::resized()
     auto header = area.removeFromTop(theme::metrics::headerHeight).reduced(theme::metrics::padding, 0);
     mTitle.setBounds(header.removeFromLeft(112).withSizeKeepingCentre(112, 24));
 
-    mMuteButton.setBounds(header.removeFromLeft(78).withSizeKeepingCentre(78, 28));
+    mMuteButton.setBounds(header.removeFromLeft(178).withSizeKeepingCentre(178, 28));
     header.removeFromLeft(theme::metrics::gap);
+    mHeaderMeters.setBounds(header.removeFromLeft(190).withSizeKeepingCentre(190, 34));
 
     mSettingsButton.setBounds(header.removeFromRight(88).withSizeKeepingCentre(88, 26));
     header.removeFromRight(theme::metrics::gap);

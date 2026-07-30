@@ -204,30 +204,52 @@ private:
         std::printf("Outputs     : %d active\n", activeOut.countNumberOfSetBits());
         std::printf("Processor   : %d in / %d out\n", mProcessor->getTotalNumInputChannels(),
                     mProcessor->getTotalNumOutputChannels());
-        std::printf("\nListening for 6 seconds — play something...\n");
+        std::printf("Muted       : %s\n", mProcessor->isMuted() ? "yes" : "no");
+        std::printf("Chain blocks: %d\n", mProcessor->getChain().getNumBlocks());
+        std::printf("\nPhase 1 (muted) — play something for 4 seconds...\n");
         std::fflush(stdout);
 
-        // Sample the processor's own input meter, which is what the UI shows.
         mCheckThread = std::thread([this] {
-            float loudest = 0.0f;
+            const auto measure = [this](int tenths) {
+                float loudestIn = 0.0f, loudestOut = 0.0f;
 
-            for (int i = 0; i < 60; ++i)
-            {
-                juce::Thread::sleep(100);
-                const auto level = mProcessor->getInputLevel();
-                loudest = juce::jmax(loudest, level);
-
-                if (i % 10 == 9)
+                for (int i = 0; i < tenths; ++i)
                 {
-                    std::printf("  %ds: peak %.4f (%.1f dBFS)\n", (i + 1) / 10, loudest,
-                                loudest > 0.0f ? juce::Decibels::gainToDecibels(loudest) : -120.0f);
-                    std::fflush(stdout);
+                    juce::Thread::sleep(100);
+                    loudestIn = juce::jmax(loudestIn, mProcessor->getInputLevel());
+                    loudestOut = juce::jmax(loudestOut, mProcessor->getOutputLevel());
                 }
-            }
 
-            std::printf("\n%s\n", loudest > 0.0005f
-                                       ? "SIGNAL REACHED THE APP."
-                                       : "NO SIGNAL — the app sees silence on its input channels.");
+                return std::make_pair(loudestIn, loudestOut);
+            };
+
+            const auto describe = [](float level) {
+                return level > 0.0f ? juce::String(juce::Decibels::gainToDecibels(level), 1) + " dBFS"
+                                    : juce::String("silent");
+            };
+
+            const auto [mutedIn, mutedOut] = measure(40);
+            std::printf("  input  %s\n  output %s   (expected silent while muted)\n",
+                        describe(mutedIn).toRawUTF8(), describe(mutedOut).toRawUTF8());
+
+            std::printf("\nPhase 2 (un-muted) — keep playing for 4 seconds...\n");
+            std::fflush(stdout);
+            juce::MessageManager::callAsync([this] { mProcessor->setMuted(false); });
+
+            const auto [liveIn, liveOut] = measure(40);
+            std::printf("  input  %s\n  output %s\n", describe(liveIn).toRawUTF8(),
+                        describe(liveOut).toRawUTF8());
+
+            std::printf("\n--- verdict ---\n");
+
+            if (liveIn <= 0.0005f)
+                std::printf("NO INPUT: nothing is reaching the app's input channel.\n");
+            else if (liveOut <= 0.0005f)
+                std::printf("INPUT OK, NO OUTPUT: signal arrives but does not leave the processor.\n");
+            else
+                std::printf("INPUT AND OUTPUT BOTH WORKING (in %s, out %s).\n",
+                            describe(liveIn).toRawUTF8(), describe(liveOut).toRawUTF8());
+
             std::fflush(stdout);
             juce::MessageManager::callAsync([] { juce::JUCEApplication::getInstance()->quit(); });
         });

@@ -147,6 +147,7 @@ set(BLOCKRIG_SOURCES
     src/dsp/ModelLoader.cpp
     src/ui/Theme.cpp
     src/ui/CpuMeter.cpp
+    src/ui/HeaderMeters.cpp
     src/ui/LaneView.cpp
     src/ui/BlockPicker.cpp
     src/ui/NamBlockPanel.cpp

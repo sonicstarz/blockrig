@@ -7,6 +7,7 @@
 
 #include "BlockRigProcessor.h"
 #include "ui/CpuMeter.h"
+#include "ui/HeaderMeters.h"
 #include "ui/LaneView.h"
 #include "ui/PluginEditorWindows.h"
 #include "ui/Theme.h"
@@ -50,6 +51,7 @@ private:
 
     juce::Label mTitle;
     CpuMeter mCpuMeter;
+    HeaderMeters mHeaderMeters;
     juce::TextButton mSettingsButton{"Settings"};
 
     /// Big and always reachable: an app that opens a live input into a live
