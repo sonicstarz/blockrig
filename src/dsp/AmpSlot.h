@@ -10,10 +10,19 @@
 
 #include "dsp/ResamplingNam.h"
 #include "dsp/ToneStack.h"
-#include "state/Parameters.h"
 
 namespace nammodeler
 {
+
+/// How a capture's output level is derived. Order matches the block's parameter
+/// and must not change: hosts store automation by index.
+enum class OutputMode
+{
+    raw = 0,
+    normalized = 1,
+    calibrated = 2
+};
+
 
 /// Everything the audio thread needs to know about the loaded model, cached at
 /// adoption time so the per-block path never touches the model's accessors.

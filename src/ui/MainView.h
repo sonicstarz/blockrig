@@ -9,6 +9,7 @@
 #include "ui/CpuMeter.h"
 #include "ui/HeaderMeters.h"
 #include "ui/TransportBar.h"
+#include "state/RigFiles.h"
 #include "ui/LaneView.h"
 #include "ui/PluginEditorWindows.h"
 #include "ui/Theme.h"
@@ -39,6 +40,10 @@ private:
     void showSettings();
     void startScan();
     void refreshHeader();
+    void showRigMenu();
+    void saveRig(bool forceChooser);
+    void openRig();
+    void reportRestore(const rigstate::RestoreResult& result, const juce::String& error);
     void buildTabs();
     void updateLayoutLimits();
     void updatePanel();
@@ -55,6 +60,9 @@ private:
     HeaderMeters mHeaderMeters;
     TransportBar mTransportBar;
     juce::TextButton mSettingsButton{"Settings"};
+    juce::TextButton mRigButton{"Rig"};
+    juce::Label mRigName;
+    juce::File mCurrentRigFile;
 
     /// Big and always reachable: an app that opens a live input into a live
     /// output needs an obvious kill switch, not a menu item.
@@ -105,6 +113,7 @@ private:
     juce::StretchableLayoutManager mLayout;
     std::unique_ptr<juce::StretchableLayoutResizerBar> mResizer;
 
+    std::unique_ptr<juce::FileChooser> mFileChooser;
     juce::TooltipWindow mTooltips{this, 600};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainView)

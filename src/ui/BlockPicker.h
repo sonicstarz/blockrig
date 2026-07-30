@@ -6,6 +6,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "ui/BlockCategories.h"
+
 namespace blockrig
 {
 class PluginCatalog;
@@ -42,6 +44,7 @@ private:
         bool isRecent = false;
         juce::String sectionLabel; ///< non-empty when this row starts a section
         bool isHeader = false;
+        BlockCategory category = BlockCategory::other;
     };
 
     void rebuildEntries();

@@ -48,7 +48,7 @@ void discoverPlugins()
         if (format->getName().containsIgnoreCase("VST3"))
         {
             const auto ourPlugin = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                                       .getChildFile("Library/Audio/Plug-Ins/VST3/NAM Modeler.vst3");
+                                       .getChildFile("Library/Audio/Plug-Ins/VST3/BlockRig.vst3");
             if (ourPlugin.exists())
                 format->findAllTypesForFile(gAvailable, ourPlugin.getFullPathName());
         }
@@ -489,7 +489,7 @@ void testMixedFormatChain()
 {
     std::printf("\nMixed AU + VST3 chain\n");
 
-    const auto* ours = findDescription("NAM Modeler");
+    const auto* ours = findDescription("BlockRig");
     const auto* delay = findDescription("AUDelay");
 
     if (ours == nullptr || delay == nullptr)

@@ -7,6 +7,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "BlockRigProcessor.h"
+#include "ui/BlockCategories.h"
 
 namespace blockrig
 {
@@ -35,7 +36,7 @@ public:
     void setLoad(float fractionOfBudget);
     /// "A" or "B" on a split stage; empty when the stage has a single path.
     void setRowLabel(juce::String label);
-    void setAccentColour(juce::Colour colour);
+    void setCategory(BlockCategory category);
 
     bool isBypassed() const { return mBypassed; }
 
@@ -57,7 +58,7 @@ private:
     bool mDragging = false;
     juce::Rectangle<int> mHomeBounds;
     juce::String mRowLabel;
-    juce::Colour mAccent{0xff8b93a1};
+    BlockCategory mCategory = BlockCategory::other;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BlockTile)
 };

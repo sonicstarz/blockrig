@@ -5,7 +5,7 @@
 #include <functional>
 #include <optional>
 
-#include <juce_core/juce_core.h>
+#include <juce_events/juce_events.h>
 
 #include "dsp/AmpSlot.h"
 

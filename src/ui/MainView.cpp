@@ -626,6 +626,15 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mSettingsButton.onClick = [this] { showSettings(); };
     addAndMakeVisible(mSettingsButton);
 
+    mRigButton.onClick = [this] { showRigMenu(); };
+    addAndMakeVisible(mRigButton);
+
+    mRigName.setFont(juce::FontOptions(12.5f));
+    mRigName.setColour(juce::Label::textColourId, theme::colours::textDim);
+    mRigName.setJustificationType(juce::Justification::centredLeft);
+    mRigName.setText("Untitled rig", juce::dontSendNotification);
+    addAndMakeVisible(mRigName);
+
     addAndMakeVisible(mLane);
 
     mMuteBanner.onClick = [this] {
@@ -929,6 +938,140 @@ void MainView::startScan()
     job->launchThread();
 }
 
+void MainView::showRigMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem(1, "New rig");
+    menu.addSeparator();
+    menu.addItem(2, "Open rig...");
+    menu.addItem(3, "Save rig", mCurrentRigFile != juce::File{});
+    menu.addItem(4, "Save rig as...");
+    menu.addSeparator();
+    menu.addItem(juce::PopupMenu::Item("Rigs are saved to " + rigfiles::getDefaultDirectory().getFileName())
+                     .setEnabled(false));
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mRigButton), [this](int choice) {
+        switch (choice)
+        {
+            case 1:
+                mProcessor.getChain().clear();
+                mCurrentRigFile = juce::File{};
+                mRigName.setText("Untitled rig", juce::dontSendNotification);
+                mLane.refresh();
+                updatePanel();
+                resized();
+                break;
+            case 2: openRig(); break;
+            case 3: saveRig(false); break;
+            case 4: saveRig(true); break;
+            default: break;
+        }
+    });
+}
+
+void MainView::saveRig(bool forceChooser)
+{
+    if (!forceChooser && mCurrentRigFile != juce::File{})
+    {
+        juce::String error;
+
+        if (!rigfiles::save(mProcessor, mCurrentRigFile, error))
+            juce::NativeMessageBox::showAsync(juce::MessageBoxOptions()
+                                                  .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                                  .withTitle("Could not save rig")
+                                                  .withMessage(error)
+                                                  .withButton("OK"),
+                                              nullptr);
+        return;
+    }
+
+    mFileChooser = std::make_unique<juce::FileChooser>("Save rig", rigfiles::getDefaultDirectory(),
+                                                      rigfiles::kFileWildcard);
+
+    mFileChooser->launchAsync(juce::FileBrowserComponent::saveMode
+                                  | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [this](const juce::FileChooser& chooser) {
+                                  const auto file = chooser.getResult();
+                                  if (file == juce::File{})
+                                      return;
+
+                                  juce::String error;
+
+                                  if (rigfiles::save(mProcessor, file, error))
+                                  {
+                                      mCurrentRigFile = file.withFileExtension(rigfiles::kFileExtension);
+                                      mRigName.setText(mCurrentRigFile.getFileNameWithoutExtension(),
+                                                       juce::dontSendNotification);
+                                  }
+                                  else
+                                  {
+                                      juce::NativeMessageBox::showAsync(
+                                          juce::MessageBoxOptions()
+                                              .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                              .withTitle("Could not save rig")
+                                              .withMessage(error)
+                                              .withButton("OK"),
+                                          nullptr);
+                                  }
+                              });
+}
+
+void MainView::openRig()
+{
+    mFileChooser = std::make_unique<juce::FileChooser>("Open rig", rigfiles::getDefaultDirectory(),
+                                                      rigfiles::kFileWildcard);
+
+    mFileChooser->launchAsync(juce::FileBrowserComponent::openMode
+                                  | juce::FileBrowserComponent::canSelectFiles,
+                              [this](const juce::FileChooser& chooser) {
+                                  const auto file = chooser.getResult();
+                                  if (!file.existsAsFile())
+                                      return;
+
+                                  rigfiles::load(mProcessor, file,
+                                                 [this, file](rigstate::RestoreResult result,
+                                                              juce::String error) {
+                                                     if (error.isEmpty())
+                                                     {
+                                                         mCurrentRigFile = file;
+                                                         mRigName.setText(file.getFileNameWithoutExtension(),
+                                                                          juce::dontSendNotification);
+                                                     }
+
+                                                     mLane.refresh();
+                                                     updatePanel();
+                                                     resized();
+                                                     reportRestore(result, error);
+                                                 });
+                              });
+}
+
+void MainView::reportRestore(const rigstate::RestoreResult& result, const juce::String& error)
+{
+    juce::String message = error;
+
+    // A rig that half-loaded is worth saying out loud: silence would leave the
+    // user wondering why their chain is short.
+    if (message.isEmpty() && !result.missingPlugins.isEmpty())
+        message = "These plug-ins are not installed and were left as empty slots:\n\n"
+                  + result.missingPlugins.joinIntoString("\n");
+
+    if (message.isEmpty() && !result.stateNotRestored.isEmpty())
+        message = "These plug-ins loaded but refused their saved settings:\n\n"
+                  + result.stateNotRestored.joinIntoString("\n");
+
+    if (message.isEmpty())
+        return;
+
+    juce::NativeMessageBox::showAsync(juce::MessageBoxOptions()
+                                          .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                          .withTitle("Rig loaded with problems")
+                                          .withMessage(message)
+                                          .withButton("OK"),
+                                      nullptr);
+}
+
 void MainView::showSettings()
 {
     juce::PopupMenu menu;
@@ -968,9 +1111,12 @@ void MainView::paint(juce::Graphics& g)
 {
     g.fillAll(theme::colours::background);
 
-    // Header divider.
+    // Header and footer rules.
     g.setColour(theme::colours::outline);
     g.drawHorizontalLine(theme::metrics::headerHeight, 0.0f, static_cast<float>(getWidth()));
+    g.drawHorizontalLine(getHeight() - theme::metrics::footerHeight - theme::metrics::gap,
+                         static_cast<float>(theme::metrics::padding),
+                         static_cast<float>(getWidth() - theme::metrics::padding));
 }
 
 void MainView::resized()
@@ -978,7 +1124,11 @@ void MainView::resized()
     auto area = getLocalBounds();
 
     auto header = area.removeFromTop(theme::metrics::headerHeight).reduced(theme::metrics::padding, 0);
-    mTitle.setBounds(header.removeFromLeft(112).withSizeKeepingCentre(112, 24));
+    mTitle.setBounds(header.removeFromLeft(104).withSizeKeepingCentre(104, 24));
+    mRigButton.setBounds(header.removeFromLeft(52).withSizeKeepingCentre(52, 26));
+    header.removeFromLeft(6);
+    mRigName.setBounds(header.removeFromLeft(130).withSizeKeepingCentre(130, 24));
+    header.removeFromLeft(theme::metrics::gap);
 
     mMuteButton.setBounds(header.removeFromLeft(178).withSizeKeepingCentre(178, 28));
     header.removeFromLeft(theme::metrics::gap);
@@ -986,15 +1136,16 @@ void MainView::resized()
 
     mSettingsButton.setBounds(header.removeFromRight(88).withSizeKeepingCentre(88, 26));
     header.removeFromRight(theme::metrics::gap);
-    mCpuMeter.setBounds(header.removeFromRight(126).withSizeKeepingCentre(126, 30));
-    header.removeFromRight(theme::metrics::gap);
     mPluginCountButton.setBounds(header.removeFromRight(110).withSizeKeepingCentre(110, 26));
-    header.removeFromRight(theme::metrics::gap);
-    mTransportBar.setBounds(header.removeFromRight(214).withSizeKeepingCentre(214, 38));
 
     area.removeFromTop(theme::metrics::gap);
     area = area.reduced(theme::metrics::padding, 0);
-    area.removeFromBottom(theme::metrics::padding);
+
+    // Footer: tempo and load, the things you glance at rather than reach for.
+    auto footer = area.removeFromBottom(theme::metrics::footerHeight);
+    mTransportBar.setBounds(footer.removeFromLeft(214).withSizeKeepingCentre(214, 34));
+    mCpuMeter.setBounds(footer.removeFromRight(126).withSizeKeepingCentre(126, 28));
+    area.removeFromBottom(theme::metrics::gap);
 
     updateLayoutLimits();
 

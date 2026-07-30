@@ -44,6 +44,7 @@ inline constexpr int gap = 10;
 inline constexpr int padding = 14;
 
 inline constexpr int headerHeight = 52;
+inline constexpr int footerHeight = 38;
 
 /// Blocks are compact squares with the name beneath, rather than wide cards.
 /// A rig is read by shape and colour at a glance; long titles inside every tile

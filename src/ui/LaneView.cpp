@@ -80,11 +80,11 @@ void BlockTile::setRowLabel(juce::String label)
     repaint();
 }
 
-void BlockTile::setAccentColour(juce::Colour colour)
+void BlockTile::setCategory(BlockCategory category)
 {
-    if (mAccent == colour)
+    if (mCategory == category)
         return;
-    mAccent = colour;
+    mCategory = category;
     repaint();
 }
 
@@ -94,7 +94,8 @@ void BlockTile::paint(juce::Graphics& g)
     auto square = bounds.removeFromTop(theme::metrics::blockSquare).toFloat().reduced(2.0f);
     auto labelArea = bounds;
 
-    const auto tint = mBypassed ? mAccent.withSaturation(0.12f).withAlpha(0.5f) : mAccent;
+    const auto categoryColour = getCategoryColour(mCategory);
+    const auto tint = mBypassed ? categoryColour.withSaturation(0.12f).withAlpha(0.5f) : categoryColour;
 
     // The block itself: a dark square carrying a coloured edge. Selection
     // thickens and brightens that edge rather than adding another shape.
@@ -104,14 +105,10 @@ void BlockTile::paint(juce::Graphics& g)
     g.setColour(mSelected ? theme::colours::accent : tint.withAlpha(mBypassed ? 0.45f : 0.85f));
     g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 2.4f : 1.6f);
 
-    // A short glyph stands in for an icon: the first letters read at a glance
-    // and never collide the way a truncated title does.
-    auto glyph = mName.retainCharacters("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
-    glyph = glyph.substring(0, 2).toUpperCase();
-
-    g.setColour(mBypassed ? theme::colours::textFaint : tint);
-    g.setFont(juce::FontOptions(19.0f, juce::Font::bold));
-    g.drawText(glyph, square.reduced(4.0f).withTrimmedBottom(9.0f), juce::Justification::centred, false);
+    // Line-art glyph for the category: a rig should be readable by shape before
+    // any of the names are read.
+    drawCategoryIcon(g, square.reduced(15.0f).withTrimmedBottom(6.0f), mCategory,
+                     mBypassed ? theme::colours::textFaint : tint, 1.7f);
 
     // Level along the bottom edge of the square.
     theme::drawLevelMeter(g, square.reduced(9.0f, 0.0f).removeFromBottom(4.0f).translated(0.0f, -5.0f),
@@ -368,14 +365,12 @@ void LaneView::refresh()
                 tile->setSelected(uid == mSelectedUid);
                 tile->setRowLabel(rows > 1 ? (rowIndex == 0 ? "A" : "B") : juce::String());
 
-                juce::String category;
                 if (plugin != nullptr)
                 {
                     juce::PluginDescription description;
                     plugin->fillInPluginDescription(description);
-                    category = description.category;
+                    tile->setCategory(categoriseBlock(description));
                 }
-                tile->setAccentColour(theme::colourForCategory(category, block->getDisplayName()));
 
                 tile->onSelect = [this, uid] { selectBlock(uid); };
 

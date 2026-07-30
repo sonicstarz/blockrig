@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "host/PluginCatalog.h"
+#include "ui/BlockCategories.h"
 #include "ui/Theme.h"
 
 namespace blockrig
@@ -82,10 +83,12 @@ void BlockPicker::rebuildEntries()
                || description.category.containsIgnoreCase(query);
     };
 
-    const auto addSection = [this](const juce::String& label) {
+    const auto addSection = [this](const juce::String& label,
+                                   BlockCategory category = BlockCategory::other) {
         Entry header;
         header.isHeader = true;
         header.sectionLabel = label;
+        header.category = category;
         mEntries.push_back(std::move(header));
     };
 
@@ -125,8 +128,8 @@ void BlockPicker::rebuildEntries()
         }
     }
 
-    // Then everything installed, alphabetically. Effects only: an instrument in
-    // a guitar chain has nothing to process.
+    // Then everything installed, grouped by category in signal-chain order. A
+    // flat A-Z list of 800 plug-ins is a wall; grouping makes it browsable.
     const auto types = mCatalog.getKnownPluginList().getTypes();
     std::vector<juce::PluginDescription> installed(types.begin(), types.end());
     std::sort(installed.begin(), installed.end(),
@@ -134,21 +137,29 @@ void BlockPicker::rebuildEntries()
                   return a.name.compareIgnoreCase(b.name) < 0;
               });
 
-    bool addedHeader = false;
-    for (const auto& description : installed)
+    for (const auto category : getAllCategories())
     {
-        if (description.isInstrument || !matches(description))
-            continue;
+        bool addedHeader = false;
 
-        if (!addedHeader)
+        for (const auto& description : installed)
         {
-            addSection(query.isEmpty() ? "All plug-ins" : "Matches");
-            addedHeader = true;
-        }
+            if (description.isInstrument || !matches(description))
+                continue;
 
-        Entry entry;
-        entry.description = description;
-        mEntries.push_back(std::move(entry));
+            if (categoriseBlock(description) != category)
+                continue;
+
+            if (!addedHeader)
+            {
+                addSection(getCategoryName(category), category);
+                addedHeader = true;
+            }
+
+            Entry entry;
+            entry.description = description;
+            entry.category = category;
+            mEntries.push_back(std::move(entry));
+        }
     }
 
     const int selectable = static_cast<int>(std::count_if(mEntries.begin(), mEntries.end(),
@@ -216,9 +227,15 @@ void BlockPicker::paintListBoxItem(int row, juce::Graphics& g, int width, int he
 
     if (entry.isHeader)
     {
+        auto header = bounds.reduced(6, 0).withTrimmedTop(6);
+
+        if (entry.category != BlockCategory::other)
+            drawCategoryIcon(g, header.removeFromLeft(16).toFloat().reduced(1.0f), entry.category,
+                             getCategoryColour(entry.category), 1.3f);
+
         g.setColour(theme::colours::textFaint);
         g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
-        g.drawText(entry.sectionLabel.toUpperCase(), bounds.reduced(6, 0).withTrimmedTop(6),
+        g.drawText(entry.sectionLabel.toUpperCase(), header.withTrimmedLeft(4),
                    juce::Justification::bottomLeft, true);
         return;
     }
@@ -230,6 +247,12 @@ void BlockPicker::paintListBoxItem(int row, juce::Graphics& g, int width, int he
     }
 
     auto text = bounds.reduced(8, 0);
+
+    // The same glyph the block will carry once it is in the lane.
+    const auto category = entry.isBuiltIn ? BlockCategory::amp : entry.category;
+    drawCategoryIcon(g, text.removeFromLeft(20).toFloat().reduced(2.0f), category,
+                     getCategoryColour(category), 1.3f);
+    text.removeFromLeft(4);
 
     // Format badge on the right, so scanning the list by type is easy.
     const auto badge = entry.isBuiltIn ? juce::String("BUILT-IN")
