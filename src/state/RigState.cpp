@@ -200,6 +200,16 @@ juce::ValueTree toValueTree(BlockRigProcessor& processor)
     output.setProperty(ids::gainDb, processor.getOutputGainDb(), nullptr);
     rig.appendChild(output, nullptr);
 
+    if (processor.getAudioStateXml)
+    {
+        if (const auto audio = processor.getAudioStateXml(); audio.isNotEmpty())
+        {
+            juce::ValueTree audioTree("AudioSetup");
+            audioTree.setProperty("deviceStateXml", audio, nullptr);
+            rig.appendChild(audioTree, nullptr);
+        }
+    }
+
     juce::ValueTree transport("Transport");
     transport.setProperty("bpm", processor.getTransport().getBpm(), nullptr);
     transport.setProperty("timeSigNumerator", processor.getTransport().getTimeSignatureNumerator(), nullptr);
@@ -272,6 +282,10 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
     const auto output = rig.getChildWithName(ids::output);
     if (output.isValid())
         processor.setOutputGainDb(static_cast<float>(output.getProperty(ids::gainDb, 0.0)));
+
+    if (const auto audio = rig.getChildWithName("AudioSetup");
+        audio.isValid() && processor.applyAudioStateXml)
+        processor.applyAudioStateXml(audio.getProperty("deviceStateXml").toString());
 
     if (const auto transport = rig.getChildWithName("Transport"); transport.isValid())
     {

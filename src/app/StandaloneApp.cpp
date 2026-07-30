@@ -94,6 +94,21 @@ public:
 
         setUpAudio();
 
+        // A rig carries its audio setup, so loading one puts the whole session
+        // back - not just the blocks.
+        mProcessor->getAudioStateXml = [this] {
+            if (auto xml = mDeviceManager.createStateXml())
+                return xml->toString();
+            return juce::String();
+        };
+        mProcessor->applyAudioStateXml = [this](const juce::String& text) {
+            if (const auto xml = juce::parseXML(text))
+            {
+                mDeviceManager.initialise(1, 2, xml.get(), true);
+                ensureAnInputIsEnabled();
+            }
+        };
+
         mMainWindow = std::make_unique<MainWindow>(getApplicationName(), *mProcessor, mDeviceManager);
 
         restoreLastSession();
@@ -209,8 +224,10 @@ private:
                     savedState = std::make_unique<juce::XmlElement>(*deviceState);
 
         // Guitar in, stereo out: one input channel is the common case, so do not
-        // demand two.
-        mDeviceManager.initialise(2, 2, savedState.get(), true);
+        // demand two. Asking for two made initialise treat any saved setup on a
+        // one-input interface as unsatisfiable, so it fell back to the default
+        // input device on every launch.
+        mDeviceManager.initialise(1, 2, savedState.get(), true);
 
         ensureAnInputIsEnabled();
 
@@ -640,6 +657,33 @@ private:
                         inputDescription.toRawUTF8());
             std::printf("%-22s out: %s\n\n", "", describe(buffer).toRawUTF8());
         }
+
+        // What a hosted plug-in actually sees when it asks for the tempo.
+        mProcessor->getTransport().setBpm(93.5);
+
+        {
+            juce::AudioBuffer<float> tick(2, blockSize);
+            juce::MidiBuffer tickMidi;
+            tick.clear();
+            mProcessor->processBlock(tick, tickMidi);
+        }
+
+        if (auto* block = mProcessor->getChain().getBlockByIndex(0))
+            if (auto* plugin = block->getPlugin())
+            {
+                if (auto* playHead = plugin->getPlayHead())
+                {
+                    if (const auto position = playHead->getPosition())
+                        std::printf("Plug-in playhead: bpm %.2f  ppq %.3f  playing %d\n",
+                                    position->getBpm().orFallback(0.0),
+                                    position->getPpqPosition().orFallback(-1.0),
+                                    static_cast<int>(position->getIsPlaying()));
+                    else
+                        std::printf("Plug-in playhead: returns NO position\n");
+                }
+                else
+                    std::printf("Plug-in playhead: NOT SET\n");
+            }
 
         std::printf("Input mode is %s\n",
                     mProcessor->getInputMode() == BlockRigProcessor::InputMode::mono ? "MONO (sums to one channel"

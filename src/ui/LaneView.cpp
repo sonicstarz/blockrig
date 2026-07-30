@@ -117,7 +117,7 @@ void BlockTile::paint(juce::Graphics& g)
     if (mRowLabel.isNotEmpty())
     {
         g.setColour(theme::colours::accent);
-        g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+        g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
         g.drawText(mRowLabel, square.reduced(5.0f).removeFromTop(12.0f), juce::Justification::topLeft, false);
     }
 
@@ -137,7 +137,7 @@ void BlockTile::paint(juce::Graphics& g)
 
     g.setColour(mSelected ? theme::colours::text
                           : (mBypassed ? theme::colours::textFaint : theme::colours::textDim));
-    g.setFont(juce::FontOptions(10.5f));
+    g.setFont(juce::FontOptions(12.0f));
     g.drawFittedText(mName, labelArea.reduced(1, 1), juce::Justification::centredTop, 2, 0.8f);
 }
 
@@ -183,10 +183,15 @@ void BlockTile::mouseDrag(const juce::MouseEvent& event)
 
 void BlockTile::mouseUp(const juce::MouseEvent& event)
 {
-    juce::ignoreUnused(event);
-
+    // Click-and-release opens the block; click-and-hold-and-move drags it.
+    // Opening on mouseDown made every drag start by throwing a window in
+    // your face.
     if (!mDragging)
+    {
+        if (!event.mods.isPopupMenu() && onOpenEditor)
+            onOpenEditor();
         return;
+    }
 
     mDragging = false;
     setAlpha(1.0f);
@@ -253,7 +258,7 @@ void EndBlock::paint(juce::Graphics& g)
                           mLevel);
 
     g.setColour(theme::colours::textFaint);
-    g.setFont(juce::FontOptions(9.5f));
+    g.setFont(juce::FontOptions(11.0f));
     g.drawFittedText(mCaption, bounds.reduced(1, 1), juce::Justification::centredTop, 2, 0.8f);
 }
 
@@ -368,11 +373,7 @@ void LaneView::refresh()
                     tile->setCategory(categoriseBlock(description));
                 }
 
-                tile->onSelect = [this, uid] {
-                    selectBlock(uid);
-                    if (onBlockActivated)
-                        onBlockActivated(uid);
-                };
+                tile->onSelect = [this, uid] { selectBlock(uid); };
 
                 tile->onToggleBypass = [this, uid] {
                     if (auto* target = mProcessor.getChain().getBlockByUid(uid))

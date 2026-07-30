@@ -101,6 +101,7 @@ set(BLOCKRIG_SOURCES
     src/ui/CpuMeter.cpp
     src/ui/HeaderMeters.cpp
     src/ui/TransportBar.cpp
+    src/ui/TunerPanel.cpp
     src/ui/LaneView.cpp
     src/ui/BlockPicker.cpp
     src/ui/NamBlockPanel.cpp

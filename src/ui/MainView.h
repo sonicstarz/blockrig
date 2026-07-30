@@ -63,6 +63,9 @@ private:
     HeaderMeters mHeaderMeters;
     TransportBar mTransportBar;
     juce::TextButton mSettingsButton{"Settings"};
+    /// Global: mutes the rig and opens the tuner. Tuning happens mid-set, so it
+    /// lives in the header rather than behind a menu.
+    juce::TextButton mTunerButton{"Tuner"};
     juce::TextButton mRigButton{"Rig"};
     juce::Label mRigName;
     juce::File mCurrentRigFile;

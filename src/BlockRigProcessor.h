@@ -8,6 +8,7 @@
 #include "host/BlockChain.h"
 #include "host/PluginCatalog.h"
 #include "host/Transport.h"
+#include "dsp/PitchDetector.h"
 
 namespace blockrig
 {
@@ -71,6 +72,12 @@ public:
     /// Called on the message thread whenever the lane changes.
     std::function<void()> onChainChanged;
 
+    /// Wired by the standalone app so rig files can carry the audio device
+    /// setup. Null in the plug-in build, where the DAW owns the device and a
+    /// rig must not touch it.
+    std::function<juce::String()> getAudioStateXml;
+    std::function<void(const juce::String&)> applyAudioStateXml;
+
     /// Fired before a block's plug-in is destroyed, so anything holding its
     /// editor can let go first. A plug-in's editor keeps timers running against
     /// the processor, so destroying the processor underneath it crashes on the
@@ -131,6 +138,12 @@ public:
     };
 
     void startTestTone(TestToneSide side = TestToneSide::both);
+
+    /// Tuner mode: the input keeps feeding the pitch detector while the rig's
+    /// output is silenced, so tuning is quiet without touching the user's mute.
+    void setTunerActive(bool shouldBeActive) { mTunerActive.store(shouldBeActive, std::memory_order_relaxed); }
+    bool isTunerActive() const { return mTunerActive.load(std::memory_order_relaxed); }
+    PitchDetector& getPitchDetector() { return mPitchDetector; }
     bool isTestTonePlaying() const { return mTestToneSamplesLeft.load(std::memory_order_relaxed) > 0; }
 
     /// How many times processBlock has run. Distinguishes "the audio callback
@@ -191,6 +204,9 @@ private:
     std::atomic<bool> mMuted{false};
 
     std::atomic<juce::int64> mProcessBlockCount{0};
+    PitchDetector mPitchDetector;
+    std::atomic<bool> mTunerActive{false};
+
     std::atomic<int> mTestToneSamplesLeft{0};
     std::atomic<int> mTestToneSide{static_cast<int>(TestToneSide::both)};
     int mTestToneTotalSamples = 0;

@@ -21,15 +21,27 @@ TransportBar::TransportBar(BlockRigProcessor& processor)
 
     mBpmValue.setFont(juce::FontOptions(17.0f, juce::Font::bold));
     mBpmValue.setJustificationType(juce::Justification::centredLeft);
-    mBpmValue.setEditable(true);
-    mBpmValue.setTooltip("Tempo for synced delays and modulation. Drag or type a value.");
+    mBpmValue.setTooltip("Tempo for synced delays and modulation. Drag up and down to change, "
+                         "shift-drag for fine control, double-click to type.");
     mBpmValue.onTextChange = [this] { applyBpmFromEditor(); };
+    mBpmValue.setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
+    mBpmValue.onDragStart = [this] { mDragBpm = mProcessor.getTransport().getBpm(); };
+    mBpmValue.onDrag = [this](double delta) {
+        mDragBpm += delta;
+        mProcessor.getTransport().setBpm(mDragBpm);
+        mShownBpm = 0.0; // force the readout to repaint even for small moves
+        refresh();
+    };
     addAndMakeVisible(mBpmValue);
 
-    mTapButton.setTooltip("Tap four or more times to set the tempo.");
+    mTapButton.setTooltip("Tap the tempo. Two taps set it; keep tapping to steady it.");
     mTapButton.onClick = [this] {
-        mProcessor.getTransport().tap();
-        mTapFlashCountdown = 3;
+        const auto taps = mProcessor.getTransport().tap();
+        // Show that the tap registered even before there are enough for a tempo:
+        // a button that does nothing visible for the first press reads as broken.
+        mTapButton.setButtonText(taps < 2 ? "TAP…" : "TAP");
+        mTapFlashCountdown = 8;
+        mShownBpm = 0.0;
         refresh();
     };
     addAndMakeVisible(mTapButton);
@@ -66,10 +78,12 @@ void TransportBar::applyBpmFromEditor()
 
 void TransportBar::timerCallback()
 {
-    if (mTapFlashCountdown > 0)
-        --mTapFlashCountdown;
+    if (mTapFlashCountdown > 0 && --mTapFlashCountdown == 0)
+        mTapButton.setButtonText("TAP");
 
-    refresh();
+    // Never stomp the readout while it is being typed into.
+    if (mBpmValue.getCurrentTextEditor() == nullptr)
+        refresh();
 }
 
 void TransportBar::refresh()

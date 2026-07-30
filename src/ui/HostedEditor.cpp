@@ -16,7 +16,7 @@ public:
     {
         addAndMakeVisible(mView);
         setResizable(true, true);
-        setResizeLimits(900, 520, 4000, 2400);
+        setResizeLimits(1000, 600, 4200, 2600);
         setSize(mView.getWidth(), mView.getHeight());
     }
 

@@ -38,23 +38,23 @@ inline const juce::Colour meterClip{0xffe05252};
 
 namespace metrics
 {
-inline constexpr float cornerRadius = 7.0f;
-inline constexpr float smallCornerRadius = 4.0f;
-inline constexpr int gap = 10;
-inline constexpr int padding = 14;
+inline constexpr float cornerRadius = 8.0f;
+inline constexpr float smallCornerRadius = 5.0f;
+inline constexpr int gap = 12;
+inline constexpr int padding = 18;
 
-inline constexpr int headerHeight = 52;
-inline constexpr int footerHeight = 38;
+inline constexpr int headerHeight = 60;
+inline constexpr int footerHeight = 40;
 
 /// Blocks are compact squares with the name beneath, rather than wide cards.
 /// A rig is read by shape and colour at a glance; long titles inside every tile
 /// turn the chain into a wall of text.
-inline constexpr int blockSquare = 58;
-inline constexpr int blockLabelHeight = 26;
+inline constexpr int blockSquare = 72;
+inline constexpr int blockLabelHeight = 30;
 inline constexpr int blockWidth = blockSquare;
 inline constexpr int blockHeight = blockSquare + blockLabelHeight;
-inline constexpr int endBlockWidth = 52;
-inline constexpr int arrowWidth = 26;
+inline constexpr int endBlockWidth = 64;
+inline constexpr int arrowWidth = 32;
 inline constexpr int laneHeight = blockHeight + 2 * gap;
 } // namespace metrics
 

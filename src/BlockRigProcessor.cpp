@@ -84,6 +84,7 @@ BlockRigProcessor::~BlockRigProcessor()
 void BlockRigProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     mTransport.prepare(sampleRate);
+    mPitchDetector.prepare(sampleRate);
     mChain.setSourceIsMono(sourceIsMono());
     mChain.prepare(sampleRate, samplesPerBlock);
     mChain.setPlayHead(&mTransport);
@@ -212,6 +213,12 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     mInputLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
 
+    // The tuner reads the input after trim, before the chain - the note itself,
+    // not a delay tail of it.
+    const bool tuning = mTunerActive.load(std::memory_order_relaxed);
+    if (tuning && buffer.getNumChannels() > 0)
+        mPitchDetector.push(buffer.getReadPointer(0), numSamples);
+
     mBufferChannels.store(buffer.getNumChannels(), std::memory_order_relaxed);
     mWidthAfterInput.store(measureWidth(buffer, numSamples), std::memory_order_relaxed);
 
@@ -227,6 +234,9 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
             data[i] *= gain.getNextValue();
     }
     mOutputGain.skip(numSamples);
+
+    if (tuning)
+        buffer.applyGain(0.0f);
 
     // Mute last, so it silences the rig no matter what any block is doing.
     for (int channel = 0; channel < juce::jmin(numOutputs, buffer.getNumChannels()); ++channel)

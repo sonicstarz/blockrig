@@ -1,5 +1,7 @@
 #include "ui/MainView.h"
 
+#include "ui/TunerPanel.h"
+
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "blocks/nam/NamBlockProcessor.h"
@@ -711,6 +713,24 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mSettingsButton.onClick = [this] { showSettings(); };
     addAndMakeVisible(mSettingsButton);
 
+    mTunerButton.setTooltip("Tune up. Silences the rig while open; closing brings the sound back.");
+    mTunerButton.onClick = [this] {
+        // Toggle: if it is already open, close it.
+        for (const auto& window : mWindows)
+            if (window->blockUid == "tuner")
+            {
+                closeWindow(window.get());
+                return;
+            }
+
+        auto panel = std::make_unique<TunerPanel>(mProcessor);
+        openUtilityWindow("Tuner", BlockCategory::utility, std::move(panel));
+        mWindows.back()->blockUid = "tuner";
+        mWindows.back()->setSize(TunerPanel::kPreferredWidth,
+                                 TunerPanel::kPreferredHeight + BlockWindow::kTitleBarHeight);
+    };
+    addAndMakeVisible(mTunerButton);
+
     mRigButton.onClick = [this] { showRigMenu(); };
     addAndMakeVisible(mRigButton);
 
@@ -799,7 +819,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     setWantsKeyboardFocus(true);
     refreshHeader();
     startTimerHz(4);
-    setSize(1180, 660);
+    setSize(1440, 820);
 }
 
 MainView::~MainView()
@@ -1356,7 +1376,16 @@ void MainView::showSettings()
 
 void MainView::paint(juce::Graphics& g)
 {
-    g.fillAll(theme::colours::background);
+    // A slow vertical gradient rather than a flat fill: barely visible, but a
+    // flat #101216 across 800 px reads as unfinished in a way this does not.
+    g.setGradientFill(juce::ColourGradient(theme::colours::background.brighter(0.06f), 0.0f, 0.0f,
+                                           theme::colours::background.darker(0.12f), 0.0f,
+                                           static_cast<float>(getHeight()), false));
+    g.fillAll();
+
+    // The header band sits slightly proud of the rig.
+    g.setColour(theme::colours::panel.withAlpha(0.55f));
+    g.fillRect(0, 0, getWidth(), theme::metrics::headerHeight);
 
     // Header and footer rules.
     g.setColour(theme::colours::outline);
@@ -1380,6 +1409,8 @@ void MainView::resized()
     mMuteButton.setBounds(header.removeFromLeft(178).withSizeKeepingCentre(178, 28));
 
     mSettingsButton.setBounds(header.removeFromRight(88).withSizeKeepingCentre(88, 26));
+    header.removeFromRight(theme::metrics::gap);
+    mTunerButton.setBounds(header.removeFromRight(72).withSizeKeepingCentre(72, 26));
     header.removeFromRight(theme::metrics::gap);
     mPluginCountButton.setBounds(header.removeFromRight(110).withSizeKeepingCentre(110, 26));
     header.removeFromRight(theme::metrics::gap);
