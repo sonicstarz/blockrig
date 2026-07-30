@@ -372,7 +372,11 @@ void LaneView::refresh()
                     tile->setCategory(categoriseBlock(description));
                 }
 
-                tile->onSelect = [this, uid] { selectBlock(uid); };
+                tile->onSelect = [this, uid] {
+                    selectBlock(uid);
+                    if (onBlockActivated)
+                        onBlockActivated(uid);
+                };
 
                 tile->onToggleBypass = [this, uid] {
                     if (auto* target = mProcessor.getChain().getBlockByUid(uid))

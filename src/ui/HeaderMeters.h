@@ -29,7 +29,8 @@ private:
 
     BlockRigProcessor& mProcessor;
     float mInput = 0.0f;
-    float mOutput = 0.0f;
+    float mOutputLeft = 0.0f;
+    float mOutputRight = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HeaderMeters)
 };

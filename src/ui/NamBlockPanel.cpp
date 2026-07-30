@@ -1,5 +1,6 @@
 #include "ui/NamBlockPanel.h"
 
+#include "ui/BlockCategories.h"
 #include "ui/Theme.h"
 
 namespace blockrig
@@ -9,15 +10,14 @@ namespace
 void styleKnob(juce::Slider& slider)
 {
     slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 64, 15);
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 66, 16);
+    slider.setColour(juce::Slider::textBoxTextColourId, theme::colours::text);
 }
 
 void styleCaption(juce::Label& label, const juce::String& text)
 {
     label.setText(text.toUpperCase(), juce::dontSendNotification);
-    // Left-aligned in its cell, as in a parameter grid rather than centred under
-    // a floating knob.
-    label.setJustificationType(juce::Justification::centredLeft);
+    label.setJustificationType(juce::Justification::centred);
     label.setFont(juce::FontOptions(9.5f, juce::Font::bold));
     label.setColour(juce::Label::textColourId, theme::colours::textFaint);
 }
@@ -205,83 +205,94 @@ void NamBlockPanel::filesDropped(const juce::StringArray& files, int, int)
 
 void NamBlockPanel::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+    auto bounds = getLocalBounds().toFloat();
+    const auto accent = getCategoryColour(BlockCategory::amp);
 
     g.setColour(theme::colours::panel);
-    g.fillRoundedRectangle(bounds, theme::metrics::cornerRadius);
-    g.setColour(mDragHighlight ? theme::colours::accent : theme::colours::outline);
-    g.drawRoundedRectangle(bounds, theme::metrics::cornerRadius, mDragHighlight ? 2.0f : 1.0f);
+    g.fillRect(bounds);
 
-    // Cell dividers behind the knob row, so parameters read as a grid rather
-    // than as controls floating in a panel.
-    if (!mKnobCells.isEmpty())
+    // A faceplate behind the controls with a lit top edge. Deliberately generic:
+    // a capture carries no artwork, and inventing a specific amp's livery for an
+    // arbitrary .nam would be a lie about what has been loaded.
+    auto plate = bounds.withTrimmedTop(52.0f).reduced(theme::metrics::gap, theme::metrics::gap * 0.5f);
+    g.setColour(theme::colours::background);
+    g.fillRoundedRectangle(plate, theme::metrics::cornerRadius);
+    g.setColour(accent.withAlpha(0.20f));
+    g.drawRoundedRectangle(plate, theme::metrics::cornerRadius, 1.0f);
+    g.setColour(accent.withAlpha(0.45f));
+    g.fillRect(plate.getX() + 14.0f, plate.getY(), plate.getWidth() - 28.0f, 1.4f);
+
+    // Header: the category glyph, then whatever capture is loaded.
+    auto header = bounds.removeFromTop(52.0f).reduced(theme::metrics::gap, 6.0f);
+    drawCategoryIcon(g, header.removeFromLeft(30.0f).reduced(2.0f, 7.0f), BlockCategory::amp, accent, 1.6f);
+
+    // Gain staging visible while the knobs are being set.
+    auto meters = header.removeFromRight(86.0f).withTrimmedTop(6.0f);
+    g.setColour(theme::colours::textFaint);
+    g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
+    g.drawText("IN", meters.removeFromTop(9.0f), juce::Justification::topLeft, false);
+    theme::drawLevelMeter(g, meters.removeFromTop(5.0f), mInputLevel);
+    meters.removeFromTop(5.0f);
+    g.setColour(theme::colours::textFaint);
+    g.drawText("OUT", meters.removeFromTop(9.0f), juce::Justification::topLeft, false);
+    theme::drawLevelMeter(g, meters.removeFromTop(5.0f), mOutputLevel);
+
+    if (mDragHighlight)
     {
-        g.setColour(theme::colours::outline.withAlpha(0.6f));
-
-        for (int i = 1; i < mKnobCells.size(); ++i)
-        {
-            const auto cell = mKnobCells[i];
-            g.fillRect(static_cast<float>(cell.getX()) - 0.5f, static_cast<float>(cell.getY()) + 4.0f, 1.0f,
-                       static_cast<float>(cell.getHeight()) - 8.0f);
-        }
+        g.setColour(accent);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(2.0f), theme::metrics::cornerRadius, 2.0f);
     }
-
-    // In/out meters down the right edge, so the amp's own levels are visible
-    // without hunting.
-    auto meters = bounds.reduced(theme::metrics::padding).removeFromRight(10.0f);
-    const auto meterHeight = meters.getHeight() * 0.42f;
-    theme::drawLevelMeter(g, meters.removeFromTop(meterHeight), mInputLevel, true);
-    meters.removeFromTop(6.0f);
-    theme::drawLevelMeter(g, meters.removeFromTop(meterHeight), mOutputLevel, true);
 }
 
 void NamBlockPanel::resized()
 {
-    auto area = getLocalBounds().reduced(theme::metrics::padding);
-    area.removeFromRight(20); // meters
+    auto area = getLocalBounds().reduced(theme::metrics::gap, 0);
 
-    auto header = area.removeFromTop(46);
-    auto buttons = header.removeFromRight(200);
-    mLoadButton.setBounds(buttons.removeFromLeft(110).reduced(2, 10));
-    mClearButton.setBounds(buttons.reduced(2, 10));
+    auto header = area.removeFromTop(52).withTrimmedTop(6).withTrimmedBottom(6);
+    header.removeFromLeft(30);  // glyph
+    header.removeFromRight(86); // meters
 
-    mCaptureName.setBounds(header.removeFromTop(24));
+    auto buttons = header.removeFromRight(166);
+    mClearButton.setBounds(buttons.removeFromRight(56).reduced(2, 8));
+    mLoadButton.setBounds(buttons.removeFromRight(102).reduced(2, 8));
+
+    mCaptureName.setBounds(header.removeFromTop(22));
     mCaptureDetails.setBounds(header);
 
+    area.reduce(theme::metrics::gap, 0);
     area.removeFromTop(theme::metrics::gap);
 
-    // Knob row: the controls people actually reach for.
-    auto knobs = area.removeFromTop(84);
     mKnobCells.clearQuick();
 
+    auto knobs = area.removeFromTop(84);
     const auto layoutKnob = [this, &knobs](juce::Slider& slider, juce::Label& label, int width) {
         auto cell = knobs.removeFromLeft(width);
         mKnobCells.add(cell);
-        label.setBounds(cell.removeFromTop(15));
+        label.setBounds(cell.removeFromTop(13));
         slider.setBounds(cell);
     };
 
-    const int knobWidth = juce::jmax(64, knobs.getWidth() / 8);
-    layoutKnob(mInTrim, mInTrimLabel, knobWidth);
-    layoutKnob(mBass, mBassLabel, knobWidth);
-    layoutKnob(mMid, mMidLabel, knobWidth);
-    layoutKnob(mTreble, mTrebleLabel, knobWidth);
-    layoutKnob(mOutTrim, mOutTrimLabel, knobWidth);
-    layoutKnob(mGateThreshold, mGateThresholdLabel, knobWidth);
-    layoutKnob(mCalDbu, mCalDbuLabel, knobWidth);
-    layoutKnob(mSlim, mSlimLabel, knobWidth);
+    const int width = juce::jmax(56, juce::jmin(78, knobs.getWidth() / 8));
+    layoutKnob(mInTrim, mInTrimLabel, width);
+    layoutKnob(mBass, mBassLabel, width);
+    layoutKnob(mMid, mMidLabel, width);
+    layoutKnob(mTreble, mTrebleLabel, width);
+    layoutKnob(mOutTrim, mOutTrimLabel, width);
+    layoutKnob(mGateThreshold, mGateThresholdLabel, width);
+    layoutKnob(mCalDbu, mCalDbuLabel, width);
+    layoutKnob(mSlim, mSlimLabel, width);
 
-    area.removeFromTop(theme::metrics::gap);
+    area.removeFromTop(6);
 
-    auto toggles = area.removeFromTop(26);
-    mEqOn.setBounds(toggles.removeFromLeft(64));
-    mGateOn.setBounds(toggles.removeFromLeft(74));
-    mCalibrateInput.setBounds(toggles.removeFromLeft(138));
-    mStereo.setBounds(toggles.removeFromLeft(116));
+    auto switches = area.removeFromTop(26);
+    auto mode = switches.removeFromRight(180);
+    mOutputModeLabel.setBounds(mode.removeFromLeft(52));
+    mOutputMode.setBounds(mode.reduced(2, 1));
 
-    auto mode = toggles.removeFromRight(240);
-    mOutputModeLabel.setBounds(mode.removeFromLeft(90));
-    mOutputMode.setBounds(mode.reduced(4, 1));
+    mEqOn.setBounds(switches.removeFromLeft(56));
+    mGateOn.setBounds(switches.removeFromLeft(66));
+    mStereo.setBounds(switches.removeFromLeft(104));
+    mCalibrateInput.setBounds(switches.removeFromLeft(124));
 }
 
 } // namespace blockrig

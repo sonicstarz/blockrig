@@ -162,6 +162,8 @@ public:
 
     /// Fires when selection changes, so the panel below can follow.
     std::function<void()> onSelectionChanged;
+    /// A block was chosen for editing, which now means "open its window".
+    std::function<void(juce::String uid)> onBlockActivated;
     /// Fires when the user selects an end block (empty uid means input/output).
     std::function<void(EndBlock::Kind)> onEndBlockSelected;
 

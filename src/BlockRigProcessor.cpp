@@ -222,6 +222,29 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     }
 
     mOutputLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
+
+    if (buffer.getNumChannels() >= 2)
+    {
+        mOutputLeft.store(buffer.getMagnitude(0, 0, numSamples), std::memory_order_relaxed);
+        mOutputRight.store(buffer.getMagnitude(1, 0, numSamples), std::memory_order_relaxed);
+
+        // How different the two sides actually are. A rig can occupy two channels
+        // and still be mono, which no single level reading reveals.
+        const auto* left = buffer.getReadPointer(0);
+        const auto* right = buffer.getReadPointer(1);
+        float difference = 0.0f;
+
+        for (int i = 0; i < numSamples; ++i)
+            difference += std::abs(left[i] - right[i]);
+
+        mStereoDifference.store(difference / static_cast<float>(numSamples), std::memory_order_relaxed);
+    }
+    else
+    {
+        mOutputLeft.store(mOutputLevel.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        mOutputRight.store(0.0f, std::memory_order_relaxed);
+        mStereoDifference.store(0.0f, std::memory_order_relaxed);
+    }
 }
 
 void BlockRigProcessor::updateLatency()

@@ -108,6 +108,12 @@ public:
 
     float getInputLevel() const { return mInputLevel.load(std::memory_order_relaxed); }
     float getOutputLevel() const { return mOutputLevel.load(std::memory_order_relaxed); }
+    float getOutputLevelLeft() const { return mOutputLeft.load(std::memory_order_relaxed); }
+    float getOutputLevelRight() const { return mOutputRight.load(std::memory_order_relaxed); }
+
+    /// Mean absolute difference between the output channels. Zero means the two
+    /// sides are identical, i.e. the rig is mono however many channels it uses.
+    float getStereoDifference() const { return mStereoDifference.load(std::memory_order_relaxed); }
 
 private:
     void updateLatency();
@@ -136,6 +142,9 @@ private:
 
     std::atomic<float> mInputLevel{0.0f};
     std::atomic<float> mOutputLevel{0.0f};
+    std::atomic<float> mOutputLeft{0.0f};
+    std::atomic<float> mOutputRight{0.0f};
+    std::atomic<float> mStereoDifference{0.0f};
 
     int mReportedLatency = 0;
 

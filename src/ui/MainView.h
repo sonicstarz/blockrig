@@ -11,6 +11,7 @@
 #include "ui/TransportBar.h"
 #include "state/RigFiles.h"
 #include "ui/LaneView.h"
+#include "ui/BlockWindow.h"
 #include "ui/PluginEditorWindows.h"
 #include "ui/Theme.h"
 
@@ -33,6 +34,9 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    /// Called after a rig is restored from disk, so the lane and panels catch up.
+    void rigWasRestored();
+
 private:
     bool keyPressed(const juce::KeyPress&, juce::Component*) override;
     void timerCallback() override;
@@ -44,8 +48,6 @@ private:
     void saveRig(bool forceChooser);
     void openRig();
     void reportRestore(const rigstate::RestoreResult& result, const juce::String& error);
-    void buildTabs();
-    void updateLayoutLimits();
     void updatePanel();
     void showIoPanel(EndBlock::Kind kind);
 
@@ -89,29 +91,42 @@ private:
 
     MuteBanner mMuteBanner;
 
-    /// Hosts one child and sizes it to fill, so a tab's contents can be swapped
-    /// without adding and removing tabs.
-    class PanelHolder final : public juce::Component
+    /// Holds the floating windows and dims the rig behind whichever one is
+    /// active. Everything below the header lives under this.
+    class WindowLayer final : public juce::Component
     {
     public:
-        void setPanel(std::unique_ptr<juce::Component> panel);
-        void resized() override;
+        WindowLayer();
 
-    private:
-        std::unique_ptr<juce::Component> mPanel;
+        void paint(juce::Graphics&) override;
+        void mouseDown(const juce::MouseEvent&) override;
+
+        /// True when an unpinned window is open, which is what dims the backdrop.
+        bool hasModalWindow() const;
+
+        std::function<void()> onBackdropClicked;
     };
 
-    /// The bottom section: tabbed, and resizable by dragging the bar above it.
-    juce::TabbedComponent mTabs{juce::TabbedButtonBar::TabsAtTop};
-    PanelHolder mBlockTab;
-    PanelHolder mSplitTab;
-    PanelHolder mInputTab;
-    PanelHolder mOutputTab;
-    juce::Label mPanelPlaceholder;
-    juce::Label mSplitPlaceholder;
+    void openBlockWindow(const juce::String& uid);
+    void openUtilityWindow(juce::String title, BlockCategory category,
+                           std::unique_ptr<juce::Component> content);
+    void closeWindow(BlockWindow* window);
+    void closeActiveWindow();
+    void togglePin(BlockWindow* window);
+    void layOutWindows();
+    BlockWindow* findWindowForBlock(const juce::String& uid) const;
 
-    juce::StretchableLayoutManager mLayout;
-    std::unique_ptr<juce::StretchableLayoutResizerBar> mResizer;
+    static constexpr int kMaxPinnedWindows = 6;
+
+    WindowLayer mWindowLayer;
+    std::vector<std::unique_ptr<BlockWindow>> mWindows;
+
+    /// Circled X at the top-left, which closes whatever window is open. Present
+    /// even when a window covers little of the app, so there is always one
+    /// obvious way out.
+    juce::TextButton mCloseOverlayButton{"X"};
+
+    juce::Label mCanvasHint;
 
     std::unique_ptr<juce::FileChooser> mFileChooser;
     juce::TooltipWindow mTooltips{this, 600};

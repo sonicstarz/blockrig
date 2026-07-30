@@ -97,6 +97,7 @@ set(BLOCKRIG_SOURCES
     src/dsp/ModelLoader.cpp
     src/ui/Theme.cpp
     src/ui/BlockCategories.cpp
+    src/ui/BlockWindow.cpp
     src/ui/CpuMeter.cpp
     src/ui/HeaderMeters.cpp
     src/ui/TransportBar.cpp

@@ -8,6 +8,7 @@
 #include "host/BlockInstance.h"
 #include "host/PluginCatalog.h"
 #include "host/PluginScannerWorker.h"
+#include "state/RigFiles.h"
 #include "ui/MainView.h"
 
 namespace blockrig
@@ -15,6 +16,8 @@ namespace blockrig
 namespace
 {
 constexpr const char* kSettingsFileName = "BlockRig.settings";
+/// The rig as it was when the app last closed, restored on the next launch.
+constexpr const char* kSessionFileName = "LastSession.blockrig";
 constexpr const char* kDeviceStateKey = "audioDeviceState";
 } // namespace
 
@@ -84,10 +87,25 @@ public:
         setUpAudio();
 
         mMainWindow = std::make_unique<MainWindow>(getApplicationName(), *mProcessor, mDeviceManager);
+
+        restoreLastSession();
+
+        // Periodic save as well as save-on-quit, so a crash costs at most half a
+        // minute of work rather than the whole rig.
+        mAutoSave = std::make_unique<AutoSave>(*mProcessor, getSessionFile());
     }
 
     void shutdown() override
     {
+        // Save the rig first: everything below tears down what it describes.
+        if (mProcessor != nullptr && mMainWindow != nullptr)
+        {
+            juce::String error;
+            rigfiles::save(*mProcessor, getSessionFile(), error);
+        }
+
+        mAutoSave = nullptr;
+
         if (mScanThread.joinable())
             mScanThread.join();
 
@@ -122,6 +140,56 @@ private:
     }
 
     static juce::File getSettingsFile() { return getStorageDirectory().getChildFile(kSettingsFileName); }
+    static juce::File getSessionFile() { return getStorageDirectory().getChildFile(kSessionFileName); }
+
+    /// Puts back whatever was loaded when the app last closed. Rebuilding a rig
+    /// from scratch every launch is the fastest way to make a tool unusable.
+    void restoreLastSession()
+    {
+        const auto session = getSessionFile();
+
+        if (!session.existsAsFile())
+            return;
+
+        rigfiles::load(*mProcessor, session, [this](rigstate::RestoreResult result, juce::String error) {
+            if (error.isNotEmpty())
+            {
+                juce::Logger::writeToLog("Could not restore the last session: " + error);
+                return;
+            }
+
+            if (!result.missingPlugins.isEmpty())
+                juce::Logger::writeToLog("Session restored without: "
+                                         + result.missingPlugins.joinIntoString(", "));
+
+            if (auto* view = dynamic_cast<MainView*>(mMainWindow->getContentComponent()))
+                view->rigWasRestored();
+        });
+    }
+
+    /// Writes the session periodically so a crash does not cost the whole rig.
+    class AutoSave final : private juce::Timer
+    {
+    public:
+        AutoSave(BlockRigProcessor& processor, juce::File file)
+            : mProcessor(processor)
+            , mFile(std::move(file))
+        {
+            startTimer(30000);
+        }
+
+        ~AutoSave() override { stopTimer(); }
+
+    private:
+        void timerCallback() override
+        {
+            juce::String error;
+            rigfiles::save(mProcessor, mFile, error);
+        }
+
+        BlockRigProcessor& mProcessor;
+        juce::File mFile;
+    };
 
     void setUpAudio()
     {
@@ -250,7 +318,8 @@ private:
             const auto blocks = mProcessor.getProcessBlockCount();
 
             mFile.appendText("levels: in " + juce::String(mPeakIn, 5) + "  out "
-                             + juce::String(mPeakOut, 5) + "  muted "
+                             + juce::String(mPeakOut, 5) + "  L-R "
+                             + juce::String(mProcessor.getStereoDifference(), 5) + "  muted "
                              + juce::String(mProcessor.isMuted() ? "yes" : "no") + "  processBlocks "
                              + juce::String(blocks) + " (+" + juce::String(blocks - mLastBlockCount) + ")\n");
 
@@ -504,6 +573,7 @@ private:
     juce::AudioDeviceManager mDeviceManager;
     juce::AudioProcessorPlayer mPlayer;
     std::unique_ptr<MainWindow> mMainWindow;
+    std::unique_ptr<AutoSave> mAutoSave;
 };
 
 } // namespace blockrig

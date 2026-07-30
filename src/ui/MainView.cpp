@@ -568,25 +568,34 @@ void MainView::MuteBanner::mouseDown(const juce::MouseEvent&)
 }
 
 //==============================================================================
-void MainView::PanelHolder::setPanel(std::unique_ptr<juce::Component> panel)
+MainView::WindowLayer::WindowLayer()
 {
-    if (mPanel != nullptr)
-        removeChildComponent(mPanel.get());
-
-    mPanel = std::move(panel);
-
-    if (mPanel != nullptr)
-    {
-        addAndMakeVisible(*mPanel);
-        resized();
-    }
+    setInterceptsMouseClicks(false, true); // transparent until a window dims it
 }
 
-void MainView::PanelHolder::resized()
+bool MainView::WindowLayer::hasModalWindow() const
 {
-    // Whatever is in here fills it: the swapped-in panel, or the placeholder.
     for (auto* child : getChildren())
-        child->setBounds(getLocalBounds());
+        if (auto* window = dynamic_cast<BlockWindow*>(child))
+            if (!window->isPinned())
+                return true;
+
+    return false;
+}
+
+void MainView::WindowLayer::paint(juce::Graphics& g)
+{
+    // Dim the rig behind an open window so attention lands on the window, while
+    // the header above stays legible and usable.
+    if (hasModalWindow())
+        g.fillAll(juce::Colours::black.withAlpha(0.55f));
+}
+
+void MainView::WindowLayer::mouseDown(const juce::MouseEvent&)
+{
+    // Clicking the dimmed area is the other obvious way to dismiss.
+    if (hasModalWindow() && onBackdropClicked)
+        onBackdropClicked();
 }
 
 //==============================================================================
@@ -643,13 +652,8 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     };
     addAndMakeVisible(mMuteBanner);
 
-    buildTabs();
 
-    mPanelPlaceholder.setJustificationType(juce::Justification::centred);
-    mPanelPlaceholder.setMinimumHorizontalScale(1.0f);
-    mPanelPlaceholder.setColour(juce::Label::textColourId, theme::colours::textFaint);
-    mPanelPlaceholder.setFont(juce::FontOptions(13.0f));
-    mBlockTab.addAndMakeVisible(mPanelPlaceholder);
+
 
     // The end blocks should say what they are wired to, not just "INPUT".
     if (mDeviceManager != nullptr)
@@ -673,7 +677,13 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     }
 
     mLane.onSelectionChanged = [this] { updatePanel(); };
-    mLane.onEndBlockSelected = [this](EndBlock::Kind kind) { showIoPanel(kind); };
+    mLane.onEndBlockSelected = [this](EndBlock::Kind kind) {
+        openUtilityWindow(kind == EndBlock::Kind::input ? "Input" : "Output", BlockCategory::utility,
+                          std::make_unique<IoPanel>(mProcessor, kind, mDeviceManager));
+    };
+
+    // A block opens as a window rather than filling a panel below the lane.
+    mLane.onBlockActivated = [this](juce::String uid) { openBlockWindow(uid); };
 
     mProcessor.onChainChanged = [this] {
         mLane.refresh();
@@ -731,145 +741,224 @@ bool MainView::keyPressed(const juce::KeyPress& key, juce::Component*)
 
 void MainView::updatePanel()
 {
-    const auto uid = mLane.getSelectedUid();
-    auto* block = uid.isNotEmpty() ? mProcessor.getChain().getBlockByUid(uid) : nullptr;
+    // Selection no longer swaps a panel: blocks are opened as windows. Keep the
+    // canvas hint honest about what to do next.
+    const bool noPlugins = mProcessor.getCatalog().getKnownPluginList().getNumTypes() == 0;
+    const bool emptyLane = mProcessor.getChain().getNumBlocks() == 0;
 
-    if (block == nullptr)
+    juce::String hint;
+
+    if (emptyLane)
+        hint = "Your chain is empty. Click  +  in the lane to add a block.";
+    else
+        hint = "Click a block to open it. Pin windows here to keep them open.";
+
+    if (noPlugins)
+        hint += "\n\nNo plug-ins scanned yet — use  Scan plug-ins  in the header.";
+
+    if (mProcessor.isMuted())
+        hint += "\n\nOutput is muted.";
+
+    // Once something is pinned the canvas speaks for itself.
+    bool anyPinned = false;
+    for (const auto& window : mWindows)
+        if (window->isPinned())
+            anyPinned = true;
+
+    mCanvasHint.setText(anyPinned ? juce::String() : hint, juce::dontSendNotification);
+}
+
+BlockWindow* MainView::findWindowForBlock(const juce::String& uid) const
+{
+    for (const auto& window : mWindows)
+        if (window->blockUid == uid)
+            return window.get();
+
+    return nullptr;
+}
+
+void MainView::openBlockWindow(const juce::String& uid)
+{
+    // Already open: bring it forward rather than making a duplicate.
+    if (auto* existing = findWindowForBlock(uid))
     {
-        const bool emptyLane = mProcessor.getChain().getNumBlocks() == 0;
-        const bool noPlugins = mProcessor.getCatalog().getKnownPluginList().getNumTypes() == 0;
-
-        juce::String guidance;
-        if (emptyLane)
-            guidance = "Your chain is empty.\n\nClick  +  in the lane above to add a block.\n"
-                       "Start with NAM under Built-in, then drop a .nam capture on it.";
-        else
-            guidance = "Click a block in the lane to edit it.\n\n"
-                       "Drag blocks to reorder  •  click a block's dot to bypass  •  "
-                       "double-click a plug-in to open its window.";
-
-        if (noPlugins)
-            guidance += "\n\nNo plug-ins scanned yet — use  Scan plug-ins  in the header to find your VSTs.";
-
-        if (mProcessor.isMuted())
-            guidance += "\n\nOutput is MUTED. Click the red button in the header when you are ready to hear it.";
-
-        mBlockTab.setPanel(nullptr);
-        mPanelPlaceholder.setText(guidance, juce::dontSendNotification);
-        mPanelPlaceholder.setVisible(true);
-        mBlockTab.resized();
+        existing->toFront(true);
         return;
     }
 
-    mPanelPlaceholder.setVisible(false);
+    auto* block = mProcessor.getChain().getBlockByUid(uid);
+    if (block == nullptr)
+        return;
 
-    // Built-ins get a proper inline panel; third-party plug-ins get their own
-    // editor in a floating window, with a generic view here as a stand-in.
-    std::unique_ptr<juce::Component> panel;
+    auto* plugin = block->getPlugin();
+    if (plugin == nullptr)
+        return;
 
-    if (auto* nam = dynamic_cast<NamBlockProcessor*>(block->getPlugin()))
+    juce::PluginDescription description;
+    plugin->fillInPluginDescription(description);
+    const auto category = categoriseBlock(description);
+
+    std::unique_ptr<juce::Component> content;
+    juce::String subtitle;
+    int width = BlockWindow::kDefaultWidth;
+    int height = BlockWindow::kDefaultHeight;
+
+    if (auto* nam = dynamic_cast<NamBlockProcessor*>(plugin))
     {
-        panel = std::make_unique<NamBlockPanel>(*nam);
+        content = std::make_unique<NamBlockPanel>(*nam);
+        width = 700;
+        height = 300;
     }
-    else if (auto* plugin = block->getPlugin())
+    else if (plugin->hasEditor())
     {
-        if (mEditorWindows.isOpen(uid))
+        // The plug-in's own interface, sized to whatever it asks for.
+        auto* editor = plugin->createEditorIfNeeded();
+
+        if (editor != nullptr)
         {
-            // Its editor is in a floating window; an editor cannot live in two
-            // places, so say so rather than showing an empty panel.
-            auto note = std::make_unique<juce::Label>();
-            note->setText(plugin->getName() + " is open in its own window.\n\n"
-                              + "Close that window to bring the interface back here.",
-                          juce::dontSendNotification);
-            note->setJustificationType(juce::Justification::centred);
-            note->setColour(juce::Label::textColourId, theme::colours::textFaint);
-            panel = std::move(note);
-        }
-        else if (plugin->hasEditor())
-        {
-            panel = std::make_unique<EmbeddedPluginEditor>(*plugin, [this, uid] {
-                if (auto* target = mProcessor.getChain().getBlockByUid(uid))
-                    if (auto* pluginToShow = target->getPlugin())
-                    {
-                        // Drop the embedded copy first: one editor, one home.
-                        mBlockTab.setPanel(nullptr);
-                        mEditorWindows.show(uid, *pluginToShow);
-                        mLane.refresh();
-                        updatePanel();
-                    }
-            });
-        }
-        else
-        {
-            // No interface of its own; the parameter list is the honest fallback.
-            panel = std::make_unique<juce::GenericAudioProcessorEditor>(*plugin);
+            width = juce::jlimit(280, 1100, editor->getWidth());
+            height = juce::jlimit(180, 800, editor->getHeight() + BlockWindow::kTitleBarHeight);
+
+            auto holder = std::make_unique<juce::Component>();
+            holder->addAndMakeVisible(editor);
+            editor->setTopLeftPosition(0, 0);
+            content = std::move(holder);
         }
     }
 
-    mBlockTab.setPanel(std::move(panel));
+    if (content == nullptr)
+    {
+        content = std::make_unique<juce::GenericAudioProcessorEditor>(*plugin);
+        subtitle = "no interface";
+    }
 
-    // The Split tab follows the selection: it only means anything for a block
-    // that is actually on one side of a split.
-    const auto position = mProcessor.getChain().findBlock(uid);
-    const bool inSplit = position.has_value() && mProcessor.getChain().isStageSplit(position->stage);
+    auto window = std::make_unique<BlockWindow>(block->getDisplayName(), subtitle, category,
+                                                std::move(content));
+    window->blockUid = uid;
+    window->setSize(width, height);
 
-    if (inSplit)
-        mSplitTab.setPanel(std::make_unique<SplitPanel>(mProcessor, position->stage));
-    else
-        mSplitTab.setPanel(nullptr);
+    auto* windowPtr = window.get();
+    window->onClose = [this, windowPtr] { closeWindow(windowPtr); };
+    window->onTogglePin = [this, windowPtr] { togglePin(windowPtr); };
 
-    mTabs.setTabBackgroundColour(1, inSplit ? theme::colours::panel : theme::colours::background);
+    // Opens modestly sized near the middle, not filling the app.
+    window->setCentrePosition(mWindowLayer.getWidth() / 2,
+                              juce::jmax(window->getHeight() / 2 + 10, mWindowLayer.getHeight() / 2 - 40));
 
-    if (mTabs.getCurrentTabIndex() != 1 || !inSplit)
-        mTabs.setCurrentTabIndex(0);
+    mWindowLayer.addAndMakeVisible(*windowPtr);
+    mWindows.push_back(std::move(window));
+
+    layOutWindows();
 }
 
-void MainView::showIoPanel(EndBlock::Kind kind)
+void MainView::openUtilityWindow(juce::String title, BlockCategory category,
+                                 std::unique_ptr<juce::Component> content)
 {
-    mTabs.setCurrentTabIndex(kind == EndBlock::Kind::input ? 2 : 3);
+    auto window = std::make_unique<BlockWindow>(std::move(title), juce::String(), category,
+                                                std::move(content));
+    window->setSize(520, 320);
+
+    auto* windowPtr = window.get();
+    window->onClose = [this, windowPtr] { closeWindow(windowPtr); };
+    window->onTogglePin = [this, windowPtr] { togglePin(windowPtr); };
+    window->setCentrePosition(mWindowLayer.getWidth() / 2, mWindowLayer.getHeight() / 2 - 30);
+
+    mWindowLayer.addAndMakeVisible(*windowPtr);
+    mWindows.push_back(std::move(window));
+
+    layOutWindows();
 }
 
-void MainView::buildTabs()
+void MainView::closeWindow(BlockWindow* window)
 {
-    mTabs.setTabBarDepth(30);
-    mTabs.setOutline(0);
-    mTabs.setColour(juce::TabbedComponent::backgroundColourId, theme::colours::background);
-    mTabs.setColour(juce::TabbedComponent::outlineColourId, juce::Colours::transparentBlack);
+    mWindows.erase(std::remove_if(mWindows.begin(), mWindows.end(),
+                                  [window](const auto& held) { return held.get() == window; }),
+                   mWindows.end());
 
-    // Block first, since it is what the lane selection drives; the ends are
-    // parked alongside so the user can leave them open while playing.
-    mTabs.addTab("Block", theme::colours::panel, &mBlockTab, false);
-    mTabs.addTab("Split", theme::colours::panel, &mSplitTab, false);
-    mTabs.addTab("Input", theme::colours::panel, &mInputTab, false);
-    mTabs.addTab("Output", theme::colours::panel, &mOutputTab, false);
-
-    mInputTab.setPanel(std::make_unique<IoPanel>(mProcessor, EndBlock::Kind::input, mDeviceManager));
-    mOutputTab.setPanel(std::make_unique<IoPanel>(mProcessor, EndBlock::Kind::output, mDeviceManager));
-
-    mSplitPlaceholder.setText("Select a block on a split stage to balance its two sides.",
-                              juce::dontSendNotification);
-    mSplitPlaceholder.setJustificationType(juce::Justification::centred);
-    mSplitPlaceholder.setColour(juce::Label::textColourId, theme::colours::textFaint);
-    mSplitTab.addAndMakeVisible(mSplitPlaceholder);
-
-    addAndMakeVisible(mTabs);
-
-    // Draggable divider between the lane and the tabs.
-    mResizer = std::make_unique<juce::StretchableLayoutResizerBar>(&mLayout, 1, false);
-    addAndMakeVisible(*mResizer);
-
-    updateLayoutLimits();
+    layOutWindows();
+    updatePanel();
 }
 
-void MainView::updateLayoutLimits()
+void MainView::closeActiveWindow()
 {
-    // The lane never shrinks below what its rows need, so a split cannot be
-    // clipped; everything above that is the user's to divide.
-    const auto laneMinimum = static_cast<double>(mLane.getPreferredHeight());
+    // The topmost unpinned window is the one the X and the backdrop refer to.
+    for (int i = static_cast<int>(mWindows.size()); --i >= 0;)
+    {
+        if (!mWindows[static_cast<size_t>(i)]->isPinned())
+        {
+            closeWindow(mWindows[static_cast<size_t>(i)].get());
+            return;
+        }
+    }
+}
 
-    mLayout.setItemLayout(0, laneMinimum, 520.0, laneMinimum);
-    mLayout.setItemLayout(1, 7.0, 7.0, 7.0);
-    mLayout.setItemLayout(2, 120.0, -1.0, -1.0);
+void MainView::togglePin(BlockWindow* window)
+{
+    if (window == nullptr)
+        return;
+
+    if (!window->isPinned())
+    {
+        int pinned = 0;
+        for (const auto& held : mWindows)
+            if (held->isPinned())
+                ++pinned;
+
+        if (pinned >= kMaxPinnedWindows)
+        {
+            juce::NativeMessageBox::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::InfoIcon)
+                    .withTitle("Canvas is full")
+                    .withMessage("Up to " + juce::String(kMaxPinnedWindows)
+                                 + " windows can be pinned at once. Unpin one to make room.")
+                    .withButton("OK"),
+                nullptr);
+            return;
+        }
+    }
+
+    window->setPinned(!window->isPinned());
+    layOutWindows();
+    updatePanel();
+}
+
+void MainView::layOutWindows()
+{
+    // Pinned windows tile the canvas below the lane; unpinned ones float where
+    // the user left them.
+    const auto canvas = mWindowLayer.getLocalBounds().withTrimmedTop(mLane.getBottom()
+                                                                     - mWindowLayer.getY()
+                                                                     + theme::metrics::gap);
+
+    std::vector<BlockWindow*> pinned;
+    for (const auto& window : mWindows)
+        if (window->isPinned())
+            pinned.push_back(window.get());
+
+    if (!pinned.empty() && canvas.getHeight() > 80)
+    {
+        const int columns = pinned.size() <= 2 ? static_cast<int>(pinned.size()) : 3;
+        const int rows = (static_cast<int>(pinned.size()) + columns - 1) / columns;
+        const int cellWidth = canvas.getWidth() / juce::jmax(1, columns);
+        const int cellHeight = canvas.getHeight() / juce::jmax(1, rows);
+
+        for (size_t i = 0; i < pinned.size(); ++i)
+        {
+            const int column = static_cast<int>(i) % columns;
+            const int row = static_cast<int>(i) / columns;
+
+            pinned[i]->setBounds(juce::Rectangle<int>(canvas.getX() + column * cellWidth,
+                                                     canvas.getY() + row * cellHeight, cellWidth,
+                                                     cellHeight)
+                                     .reduced(theme::metrics::gap / 2));
+        }
+    }
+
+    const bool modal = mWindowLayer.hasModalWindow();
+    mWindowLayer.setInterceptsMouseClicks(modal, true);
+    mCloseOverlayButton.setVisible(modal);
+    mWindowLayer.repaint();
 }
 
 void MainView::timerCallback()
@@ -936,6 +1025,14 @@ void MainView::startScan()
     });
 
     job->launchThread();
+}
+
+void MainView::rigWasRestored()
+{
+    mLane.refresh();
+    updatePanel();
+    refreshHeader();
+    resized();
 }
 
 void MainView::showRigMenu()
@@ -1131,32 +1228,37 @@ void MainView::resized()
     header.removeFromLeft(theme::metrics::gap);
 
     mMuteButton.setBounds(header.removeFromLeft(178).withSizeKeepingCentre(178, 28));
-    header.removeFromLeft(theme::metrics::gap);
-    mHeaderMeters.setBounds(header.removeFromLeft(190).withSizeKeepingCentre(190, 34));
 
     mSettingsButton.setBounds(header.removeFromRight(88).withSizeKeepingCentre(88, 26));
     header.removeFromRight(theme::metrics::gap);
     mPluginCountButton.setBounds(header.removeFromRight(110).withSizeKeepingCentre(110, 26));
+    header.removeFromRight(theme::metrics::gap);
+    mHeaderMeters.setBounds(header.removeFromRight(170).withSizeKeepingCentre(170, 42));
+    header.removeFromRight(theme::metrics::gap);
+    // Tempo belongs at the top, next to the other things you set rather than watch.
+    mTransportBar.setBounds(header.removeFromRight(210).withSizeKeepingCentre(210, 38));
 
     area.removeFromTop(theme::metrics::gap);
     area = area.reduced(theme::metrics::padding, 0);
 
-    // Footer: tempo and load, the things you glance at rather than reach for.
+    // Footer: load, which you glance at rather than reach for.
     auto footer = area.removeFromBottom(theme::metrics::footerHeight);
-    mTransportBar.setBounds(footer.removeFromLeft(214).withSizeKeepingCentre(214, 34));
     mCpuMeter.setBounds(footer.removeFromRight(126).withSizeKeepingCentre(126, 28));
     area.removeFromBottom(theme::metrics::gap);
 
-    updateLayoutLimits();
+    mLane.setBounds(area.removeFromTop(mLane.getPreferredHeight()));
+    area.removeFromTop(theme::metrics::gap);
 
-    // Lane on top, draggable bar, tabs below — the user sets the balance.
-    juce::Component* items[] = {&mLane, mResizer.get(), &mTabs};
-    mLayout.layOutComponents(items, 3, area.getX(), area.getY(), area.getWidth(), area.getHeight(), true,
-                             true);
+    // Everything under the header belongs to the window layer, so the dim covers
+    // the rig but never the header.
+    mWindowLayer.setBounds(getLocalBounds().withTrimmedTop(theme::metrics::headerHeight));
+    mCanvasHint.setBounds(area);
 
-    mMuteBanner.setBounds(mLane.getBounds().withSizeKeepingCentre(
-        juce::jmin(430, mLane.getWidth() - 20), juce::jmin(78, mLane.getHeight() - 8)));
+    mCloseOverlayButton.setBounds(theme::metrics::padding, theme::metrics::headerHeight
+                                                               + theme::metrics::gap,
+                                  32, 32);
 
+    layOutWindows();
 }
 
 } // namespace blockrig
