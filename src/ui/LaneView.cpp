@@ -279,6 +279,14 @@ LaneView::LaneView(BlockRigProcessor& processor, PluginEditorWindows& editorWind
     mLaneContent.addAndMakeVisible(mInputBlock);
     mLaneContent.addAndMakeVisible(mOutputBlock);
     mLaneContent.addAndMakeVisible(mAddButton);
+    mLaneContent.addAndMakeVisible(mAddFirstButton);
+
+    mAddFirstButton.setTooltip("Add a block at the start of the chain");
+    mAddFirstButton.onClick = [this] {
+        // A new first stage, so it lands in front of a split rather than on one
+        // of its sides.
+        addBlockAt(BlockPosition{0, 0, 0, true}, mAddFirstButton);
+    };
 
     mInputBlock.onSelect = [this] {
         selectBlock({});
@@ -765,7 +773,10 @@ void LaneView::resized()
     // The ends sit centred against the whole (possibly two-row) lane.
     int x = 0;
     mInputBlock.setBounds(x, laneTop + (laneHeight - singleRow) / 2, theme::metrics::endBlockWidth, singleRow);
-    x += theme::metrics::endBlockWidth + theme::metrics::arrowWidth;
+    x += theme::metrics::endBlockWidth + theme::metrics::arrowWidth / 2;
+
+    mAddFirstButton.setBounds(x, laneTop + laneHeight / 2 - 13, 26, 26);
+    x += 26 + theme::metrics::arrowWidth / 2;
 
     mStageGeometry.clear();
     size_t tileCursor = 0;
@@ -836,7 +847,9 @@ void LaneView::resized()
 
     const int mainY = laneTop + laneHeight / 2;
     const int squareCentre = theme::metrics::blockSquare / 2;
-    int previousRight = mInputBlock.getRight();
+    int previousRight = mAddFirstButton.getRight();
+
+    connectors.push_back({{mInputBlock.getRight(), mainY}, {mAddFirstButton.getX(), mainY}, false, false});
 
     for (int stageIndex = 0; stageIndex < static_cast<int>(mStageGeometry.size()); ++stageIndex)
     {

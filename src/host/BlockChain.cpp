@@ -93,11 +93,14 @@ void BlockChain::insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition
     if (mPrepared)
         block->prepare(mSampleRate, mMaxBlockSize);
 
-    // Past the end of the lane means "make a new stage here".
+    // Past the end of the lane means "make a new stage here", as does an explicit
+    // request for one.
     const int stageIndex = juce::jlimit(0, static_cast<int>(mLane.size()), position.stage);
 
     if (stageIndex == static_cast<int>(mLane.size()))
         mLane.emplace_back();
+    else if (position.newStage)
+        mLane.insert(mLane.begin() + stageIndex, LaneStage{});
 
     auto& stage = mLane[static_cast<size_t>(stageIndex)];
     const int rowIndex = juce::jlimit(0, static_cast<int>(stage.rows.size()) - 1, position.row);

@@ -184,6 +184,10 @@ private:
     EndBlock mOutputBlock{EndBlock::Kind::output};
     juce::TextButton mAddButton{"+"};
 
+    /// Always present, immediately after the input, so starting a chain never
+    /// requires hunting for somewhere to click.
+    juce::TextButton mAddFirstButton{"+"};
+
     /// Cached stage geometry, so drag hit-testing and connector drawing agree.
     struct StageGeometry
     {

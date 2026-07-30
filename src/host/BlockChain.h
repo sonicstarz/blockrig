@@ -18,6 +18,11 @@ struct BlockPosition
     int stage = 0; ///< which stage along the chain
     int row = 0;   ///< which parallel row within that stage (0 = A, 1 = B)
     int index = 0; ///< position within the row
+
+    /// Insert a fresh stage here rather than joining the one already at this
+    /// index. Without it, adding at the head of a split chain would drop the
+    /// block onto side A instead of in front of the split.
+    bool newStage = false;
 };
 
 /// The audio engine: a chain of stages, each of which is either a single row of
