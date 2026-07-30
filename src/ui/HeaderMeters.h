@@ -31,6 +31,10 @@ private:
     float mInput = 0.0f;
     float mOutputLeft = 0.0f;
     float mOutputRight = 0.0f;
+    /// How different the two output channels are, as a fraction of their level.
+    /// A number, because "is this actually stereo" is not a question a pair of
+    /// bars can answer - two identical bars look exactly like a wide mix.
+    float mWidth = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HeaderMeters)
 };

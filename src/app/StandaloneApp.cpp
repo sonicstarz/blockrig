@@ -476,10 +476,59 @@ private:
             }
         }
 
+        // Answers "does a mono feed leave a stereo plug-in stuck in mono" with a
+        // measurement rather than an opinion: drive the plug-in into an explicitly
+        // stereo mode and see whether the output decorrelates.
+        //
+        // Sweeps the value rather than reading getAllValueStrings(), because a
+        // VST3 parameter can present discrete text while reporting no discrete
+        // choices - which is exactly what Valhalla's DelayStyle does.
+        for (auto* block : mProcessor->getChain().getBlocks())
+        {
+            auto* plugin = block->getPlugin();
+            if (plugin == nullptr)
+                continue;
+
+            for (auto* parameter : plugin->getParameters())
+            {
+                const auto name = parameter->getName(64);
+
+                if (!name.containsIgnoreCase("style") && !name.containsIgnoreCase("mode"))
+                    continue;
+
+                juce::StringArray seen;
+
+                for (int step = 0; step <= 64; ++step)
+                {
+                    const auto value = static_cast<float>(step) / 64.0f;
+                    const auto text = parameter->getText(value, 64);
+
+                    if (!seen.contains(text))
+                        seen.add(text);
+
+                    if (text.replace(" ", "").containsIgnoreCase("pingpong"))
+                    {
+                        parameter->setValueNotifyingHost(value);
+                        std::printf("Set %s / %s to \"%s\"\n", plugin->getName().toRawUTF8(),
+                                    name.toRawUTF8(), text.toRawUTF8());
+                        break;
+                    }
+                }
+
+                std::printf("  %s / %s offers: %s\n", plugin->getName().toRawUTF8(), name.toRawUTF8(),
+                            seen.joinIntoString(", ").toRawUTF8());
+            }
+        }
+
         std::printf("Chain has %d block(s)\n\n", mProcessor->getChain().getNumBlocks());
 
-        mProcessor->setPlayConfigDetails(2, 2, sampleRate, blockSize);
+        // One input channel and two outputs: the guitarist's real configuration,
+        // and not the same test as feeding it an idealised stereo pair.
+        mProcessor->setPlayConfigDetails(1, 2, sampleRate, blockSize);
         mProcessor->prepareToPlay(sampleRate, blockSize);
+
+        std::printf("Processor negotiated %d in / %d out\n\n",
+                    mProcessor->getTotalNumInputChannels(), mProcessor->getTotalNumOutputChannels());
 
         // Hard-decorrelated input: left only. Anything that sums to mono halves
         // it onto both sides, which is unmistakable in the numbers.
