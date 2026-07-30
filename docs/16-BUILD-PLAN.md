@@ -58,17 +58,22 @@ tests still pass.
 - The CPU meter (planned for P5) landed here, since the lane already needed per-block load for its activity strips.
 - **Not yet done in the UI:** the drop indicator is tracked but not drawn; error tiles for missing plugins exist in the schema and restore path but have no dedicated tile rendering yet; the settings sheet is a popup menu rather than a proper panel, and "Rescan plug-ins" currently explains itself rather than running a scan.
 
-## P4 — Rig state + DAW builds (2–4 days)
+## P4 — Rig state + DAW builds — **mostly complete (2026-07-30)**
 
-- Serializer per 14-SCHEMA.md (one code path for `.blockrig` files and DAW chunks), migration scaffold + fixture tests, error-tile state retention round-trip.
-- VST3/AU builds of the host; `auval`; latency propagation to the outer host; editor-window behavior inside Logic and Reaper; catalog access from the DAW build; the Logic AU-inside-AU empirical test (11-RESEARCH open item).
-- **Done when:** rig saved standalone reopens identically in Logic (AU) and Reaper (VST3), third-party state intact; `auval` passes; missing-plugin rig degrades to error tiles and recovers on reinstall.
+- ~~Serializer per 14-SCHEMA.md (one code path for `.blockrig` files and DAW chunks)~~ Done:
+  `state/RigState` + `state/RigFiles`, `.blockrig` save/open from the Rig menu, session autosave
+  every 30 s + restore on launch, sequential block rebuild with per-plugin state verification.
+- **Remaining:** the in-DAW verification pass (Logic AU, Reaper VST3, `auval` re-run after the
+  window-UI changes, AU-inside-AU test) and error tiles for missing plugins — the schema and
+  restore path retain them, the lane does not draw them yet.
 
-## P5 — CPU meter + visual design (3–5 days)
+## P5 — CPU meter + visual design — **mostly complete (2026-07-30)**
 
-- `CpuMeter` per-block timing, header meter, click-through panel, overload counter.
-- Theme pass: LookAndFeel, palette, melatonin_blur, restyled PluginListComponent + picker + panels; first-run flow; settings sheet.
-- **Done when:** CPU panel correctly fingers a deliberately-heavy block; every visible surface uses the theme; screenshot test — "doesn't look like a JUCE demo."
+- Done: `CpuMeter` (header + per-block), full theme/LookAndFeel, block categories with drawn
+  icons, Cortex-style compact lane with branch/rejoin connectors, window-based block UI with
+  pinning + dimmed backdrop, header meters with numeric dBFS and a live WIDTH readout, NAM
+  faceplate panel, tempo/tap/time-signature transport.
+- **Remaining:** first-run flow; drop indicator during tile drag.
 
 ## P6 — Hardening & release candidate (ongoing)
 
@@ -76,8 +81,25 @@ tests still pass.
 
 ## Deferred (schema-ready, not built)
 
-Parallel rows/splits (v1.1) • snapshots, setlists, A/B (v1.x) • capture creation (archived design)
-• true-stereo NAM mode • Windows • additional built-in utility blocks (tuner, IR loader, phase).
+Snapshots, setlists, A/B (v1.x) • capture creation (archived design) • Windows • additional
+built-in utility blocks (tuner, IR loader, phase). *(Splits and true-stereo NAM, deferred here
+originally, were built in v1: dual-mono/parallel stages and a dual-instance NAM block.)*
+
+## Hard-won facts (2026-07-29/30, keep)
+
+- Blocks fed a single channel must negotiate **mono in / stereo out**; stereo/stereo fed two
+  identical channels makes ping-pong/widening plug-ins symmetric and permanently centred.
+- Re-negotiating a live block races the audio thread — `BlockChain::suspendAudio` (wired to
+  `suspendProcessing`) must wrap any in-place re-prepare. The harness has no audio thread and
+  will never catch this class of bug.
+- `setStateInformation` can rearrange a VST3's buses after negotiation; `layoutDrifted()` +
+  post-restore `prepareLane` handle it.
+- Editors must close before their plug-in dies (`onBlockAboutToBeRemoved`), or their timers fire
+  into freed memory.
+- macOS grants mic access asynchronously: device state logged at startup is meaningless; every
+  ad-hoc re-sign can re-prompt.
+- Diagnostics: `--scan`, `--audio-check`, `--plugin-check <name>`, `--chain-check <a,b,...>` /
+  `--chain-check session` (per-block width, negotiated layouts).
 
 ## Risk register
 
