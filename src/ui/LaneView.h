@@ -137,6 +137,10 @@ public:
     /// Rebuilds tiles from the chain. Called whenever the lane changes.
     void refresh();
 
+    /// How tall the lane needs to be to show every row without clipping. A split
+    /// stage needs two rows, so this grows with the rig.
+    int getPreferredHeight() const;
+
     void setInputCaption(const juce::String& caption) { mInputBlock.setCaption(caption); }
     void setOutputCaption(const juce::String& caption) { mOutputBlock.setCaption(caption); }
 

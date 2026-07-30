@@ -37,6 +37,8 @@ private:
     void showSettings();
     void startScan();
     void refreshHeader();
+    void buildTabs();
+    void updateLayoutLimits();
     void updatePanel();
     void showIoPanel(EndBlock::Kind kind);
 
@@ -59,10 +61,27 @@ private:
 
     LaneView mLane;
 
-    /// Whatever the selected block wants to show: the NAM panel, a generic
-    /// parameter view, or the I/O controls.
-    std::unique_ptr<juce::Component> mPanel;
+    /// Hosts one child and sizes it to fill, so a tab's contents can be swapped
+    /// without adding and removing tabs.
+    class PanelHolder final : public juce::Component
+    {
+    public:
+        void setPanel(std::unique_ptr<juce::Component> panel);
+        void resized() override;
+
+    private:
+        std::unique_ptr<juce::Component> mPanel;
+    };
+
+    /// The bottom section: tabbed, and resizable by dragging the bar above it.
+    juce::TabbedComponent mTabs{juce::TabbedButtonBar::TabsAtTop};
+    PanelHolder mBlockTab;
+    PanelHolder mInputTab;
+    PanelHolder mOutputTab;
     juce::Label mPanelPlaceholder;
+
+    juce::StretchableLayoutManager mLayout;
+    std::unique_ptr<juce::StretchableLayoutResizerBar> mResizer;
 
     juce::TooltipWindow mTooltips{this, 600};
 

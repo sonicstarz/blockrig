@@ -408,6 +408,18 @@ void LaneView::refresh()
     mLaneContent.repaint();
 }
 
+int LaneView::getPreferredHeight() const
+{
+    auto& chain = mProcessor.getChain();
+
+    int maxRows = 1;
+    for (int stageIndex = 0; stageIndex < chain.getNumStages(); ++stageIndex)
+        maxRows = juce::jmax(maxRows, chain.getNumRows(stageIndex));
+
+    // Room for the rows plus a little breathing space and the scrollbar.
+    return maxRows * theme::metrics::blockHeight + 2 * theme::metrics::gap + 10;
+}
+
 int LaneView::rowHeight() const
 {
     return theme::metrics::blockHeight;

@@ -230,6 +230,29 @@ private:
 };
 } // namespace
 
+//==============================================================================
+void MainView::PanelHolder::setPanel(std::unique_ptr<juce::Component> panel)
+{
+    if (mPanel != nullptr)
+        removeChildComponent(mPanel.get());
+
+    mPanel = std::move(panel);
+
+    if (mPanel != nullptr)
+    {
+        addAndMakeVisible(*mPanel);
+        resized();
+    }
+}
+
+void MainView::PanelHolder::resized()
+{
+    // Whatever is in here fills it: the swapped-in panel, or the placeholder.
+    for (auto* child : getChildren())
+        child->setBounds(getLocalBounds());
+}
+
+//==============================================================================
 MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* deviceManager)
     : mProcessor(processor)
     , mDeviceManager(deviceManager)
@@ -264,11 +287,13 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
 
     addAndMakeVisible(mLane);
 
+    buildTabs();
+
     mPanelPlaceholder.setJustificationType(juce::Justification::centred);
     mPanelPlaceholder.setMinimumHorizontalScale(1.0f);
     mPanelPlaceholder.setColour(juce::Label::textColourId, theme::colours::textFaint);
     mPanelPlaceholder.setFont(juce::FontOptions(13.0f));
-    addAndMakeVisible(mPanelPlaceholder);
+    mBlockTab.addAndMakeVisible(mPanelPlaceholder);
 
     // The end blocks should say what they are wired to, not just "INPUT".
     if (mDeviceManager != nullptr)
@@ -297,6 +322,8 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mProcessor.onChainChanged = [this] {
         mLane.refresh();
         updatePanel();
+        // A split needs a second row, so the lane's minimum height changes.
+        resized();
     };
 
     addKeyListener(this);
@@ -348,8 +375,6 @@ bool MainView::keyPressed(const juce::KeyPress& key, juce::Component*)
 
 void MainView::updatePanel()
 {
-    mPanel.reset();
-
     const auto uid = mLane.getSelectedUid();
     auto* block = uid.isNotEmpty() ? mProcessor.getChain().getBlockByUid(uid) : nullptr;
 
@@ -373,9 +398,10 @@ void MainView::updatePanel()
         if (mProcessor.isMuted())
             guidance += "\n\nOutput is MUTED. Click the red button in the header when you are ready to hear it.";
 
+        mBlockTab.setPanel(nullptr);
         mPanelPlaceholder.setText(guidance, juce::dontSendNotification);
         mPanelPlaceholder.setVisible(true);
-        resized();
+        mBlockTab.resized();
         return;
     }
 
@@ -383,28 +409,56 @@ void MainView::updatePanel()
 
     // Built-ins get a proper inline panel; third-party plug-ins get their own
     // editor in a floating window, with a generic view here as a stand-in.
+    std::unique_ptr<juce::Component> panel;
+
     if (auto* nam = dynamic_cast<NamBlockProcessor*>(block->getPlugin()))
-    {
-        mPanel = std::make_unique<NamBlockPanel>(*nam);
-    }
+        panel = std::make_unique<NamBlockPanel>(*nam);
     else if (auto* plugin = block->getPlugin())
-    {
-        mPanel = std::make_unique<juce::GenericAudioProcessorEditor>(*plugin);
-    }
+        panel = std::make_unique<juce::GenericAudioProcessorEditor>(*plugin);
 
-    if (mPanel != nullptr)
-        addAndMakeVisible(*mPanel);
-
-    resized();
+    mBlockTab.setPanel(std::move(panel));
+    mTabs.setCurrentTabIndex(0);
 }
 
 void MainView::showIoPanel(EndBlock::Kind kind)
 {
-    mPanel.reset();
-    mPanelPlaceholder.setVisible(false);
-    mPanel = std::make_unique<IoPanel>(mProcessor, kind, mDeviceManager);
-    addAndMakeVisible(*mPanel);
-    resized();
+    mTabs.setCurrentTabIndex(kind == EndBlock::Kind::input ? 1 : 2);
+}
+
+void MainView::buildTabs()
+{
+    mTabs.setTabBarDepth(30);
+    mTabs.setOutline(0);
+    mTabs.setColour(juce::TabbedComponent::backgroundColourId, theme::colours::background);
+    mTabs.setColour(juce::TabbedComponent::outlineColourId, juce::Colours::transparentBlack);
+
+    // Block first, since it is what the lane selection drives; the ends are
+    // parked alongside so the user can leave them open while playing.
+    mTabs.addTab("Block", theme::colours::panel, &mBlockTab, false);
+    mTabs.addTab("Input", theme::colours::panel, &mInputTab, false);
+    mTabs.addTab("Output", theme::colours::panel, &mOutputTab, false);
+
+    mInputTab.setPanel(std::make_unique<IoPanel>(mProcessor, EndBlock::Kind::input, mDeviceManager));
+    mOutputTab.setPanel(std::make_unique<IoPanel>(mProcessor, EndBlock::Kind::output, mDeviceManager));
+
+    addAndMakeVisible(mTabs);
+
+    // Draggable divider between the lane and the tabs.
+    mResizer = std::make_unique<juce::StretchableLayoutResizerBar>(&mLayout, 1, false);
+    addAndMakeVisible(*mResizer);
+
+    updateLayoutLimits();
+}
+
+void MainView::updateLayoutLimits()
+{
+    // The lane never shrinks below what its rows need, so a split cannot be
+    // clipped; everything above that is the user's to divide.
+    const auto laneMinimum = static_cast<double>(mLane.getPreferredHeight());
+
+    mLayout.setItemLayout(0, laneMinimum, 520.0, laneMinimum);
+    mLayout.setItemLayout(1, 7.0, 7.0, 7.0);
+    mLayout.setItemLayout(2, 120.0, -1.0, -1.0);
 }
 
 void MainView::timerCallback()
@@ -524,14 +578,16 @@ void MainView::resized()
     mPluginCountButton.setBounds(header.removeFromRight(116).withSizeKeepingCentre(116, 26));
 
     area.removeFromTop(theme::metrics::gap);
-    mLane.setBounds(area.removeFromTop(theme::metrics::laneHeight).reduced(theme::metrics::padding, 0));
-    area.removeFromTop(theme::metrics::gap);
+    area = area.reduced(theme::metrics::padding, 0);
+    area.removeFromBottom(theme::metrics::padding);
 
-    auto panelArea = area.reduced(theme::metrics::padding).withTrimmedTop(0);
-    mPanelPlaceholder.setBounds(panelArea);
+    updateLayoutLimits();
 
-    if (mPanel != nullptr)
-        mPanel->setBounds(panelArea);
+    // Lane on top, draggable bar, tabs below — the user sets the balance.
+    juce::Component* items[] = {&mLane, mResizer.get(), &mTabs};
+    mLayout.layOutComponents(items, 3, area.getX(), area.getY(), area.getWidth(), area.getHeight(), true,
+                             true);
+
 }
 
 } // namespace blockrig
