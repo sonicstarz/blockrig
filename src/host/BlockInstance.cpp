@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "host/BlockInstance.h"
 
 namespace blockrig
@@ -42,7 +44,25 @@ void BlockInstance::prepare(double sampleRate, int maxBlockSize, bool sourceIsMo
         layout.inputBuses.getReference(0) = in;
         layout.outputBuses.getReference(0) = out;
 
-        return mPlugin->checkBusesLayoutSupported(layout) && mPlugin->setBusesLayout(layout);
+        const bool checked = mPlugin->checkBusesLayoutSupported(layout);
+        bool applied = checked && mPlugin->setBusesLayout(layout);
+
+        // Some plug-ins refuse a layout change while prepared even though they
+        // support the layout - the check passes, the apply fails. Release, apply,
+        // and let the caller's prepareToPlay bring them back.
+        if (checked && !applied)
+        {
+            mPlugin->releaseResources();
+            applied = mPlugin->setBusesLayout(layout);
+        }
+
+        if (const char* debug = std::getenv("BLOCKRIG_DEBUG_LAYOUT"); debug != nullptr)
+            std::fprintf(stderr, "[layout] %s ask %d/%d -> check %d apply %d now %d/%d\n",
+                         mPlugin->getName().toRawUTF8(), in.size(), out.size(), static_cast<int>(checked),
+                         static_cast<int>(applied), mPlugin->getTotalNumInputChannels(),
+                         mPlugin->getTotalNumOutputChannels());
+
+        return applied;
     };
 
     mMonoOnly = false;
