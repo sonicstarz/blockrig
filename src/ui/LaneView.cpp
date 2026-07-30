@@ -2,7 +2,6 @@
 
 #include "blocks/nam/NamBlockProcessor.h"
 #include "ui/BlockPicker.h"
-#include "ui/PluginEditorWindows.h"
 #include "ui/Theme.h"
 
 namespace blockrig
@@ -265,9 +264,8 @@ void EndBlock::mouseDown(const juce::MouseEvent&)
 }
 
 //==============================================================================
-LaneView::LaneView(BlockRigProcessor& processor, PluginEditorWindows& editorWindows)
+LaneView::LaneView(BlockRigProcessor& processor)
     : mProcessor(processor)
-    , mEditorWindows(editorWindows)
 {
     mViewport.setViewedComponent(&mLaneContent, false);
     mViewport.setScrollBarsShown(false, true, false, true);
@@ -302,7 +300,6 @@ LaneView::LaneView(BlockRigProcessor& processor, PluginEditorWindows& editorWind
     };
     mAddButton.setTooltip("Add a block at the end of the chain");
 
-    mEditorWindows.onWindowClosed = [this](juce::String) { refresh(); };
 
     refresh();
     startTimerHz(15);
@@ -311,7 +308,6 @@ LaneView::LaneView(BlockRigProcessor& processor, PluginEditorWindows& editorWind
 LaneView::~LaneView()
 {
     stopTimer();
-    mEditorWindows.onWindowClosed = nullptr;
 }
 
 void LaneView::refresh()
@@ -361,7 +357,7 @@ void LaneView::refresh()
                 const auto uid = block->getUid();
 
                 tile->setBypassed(block->isBypassed());
-                tile->setEditorOpen(mEditorWindows.isOpen(uid));
+                tile->setEditorOpen(isBlockWindowOpen != nullptr && isBlockWindowOpen(uid));
                 tile->setSelected(uid == mSelectedUid);
                 tile->setRowLabel(rows > 1 ? (rowIndex == 0 ? "A" : "B") : juce::String());
 
@@ -386,13 +382,11 @@ void LaneView::refresh()
                     }
                 };
 
+                // Single click already opens the block's window; a double click
+                // must not open a second, different kind of window on top of it.
                 tile->onOpenEditor = [this, uid] {
-                    if (auto* target = mProcessor.getChain().getBlockByUid(uid))
-                        if (auto* pluginToShow = target->getPlugin())
-                        {
-                            mEditorWindows.show(uid, *pluginToShow);
-                            refresh();
-                        }
+                    if (onBlockActivated)
+                        onBlockActivated(uid);
                 };
 
                 tile->onShowMenu = [this, uid] { showBlockMenu(uid); };
@@ -648,12 +642,8 @@ void LaneView::showBlockMenu(const juce::String& uid)
                 refresh();
                 break;
             case 2:
-                if (target != nullptr)
-                    if (auto* plugin = target->getPlugin())
-                    {
-                        mEditorWindows.show(uid, *plugin);
-                        refresh();
-                    }
+                if (onBlockActivated)
+                    onBlockActivated(uid);
                 break;
             case 3:
                 if (auto* tile = mTiles.empty() ? nullptr : mTiles.front().tile.get())
@@ -664,7 +654,6 @@ void LaneView::showBlockMenu(const juce::String& uid)
                     addBlockAt(BlockPosition{position.stage, position.row, position.index + 1}, *tile);
                 break;
             case 5:
-                mEditorWindows.close(uid);
                 mProcessor.removeBlock(uid);
                 if (mSelectedUid == uid)
                     selectBlock({});
@@ -687,7 +676,7 @@ void LaneView::timerCallback()
             placed.tile->setLoad(block->getLoad().getAverage());
             placed.tile->setActivity(juce::jlimit(0.0f, 1.0f, block->getOutputLevel()));
             placed.tile->setBypassed(block->isBypassed());
-            placed.tile->setEditorOpen(mEditorWindows.isOpen(placed.tile->getUid()));
+            placed.tile->setEditorOpen(isBlockWindowOpen != nullptr && isBlockWindowOpen(placed.tile->getUid()));
         }
     }
 

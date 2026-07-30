@@ -104,7 +104,6 @@ set(BLOCKRIG_SOURCES
     src/ui/LaneView.cpp
     src/ui/BlockPicker.cpp
     src/ui/NamBlockPanel.cpp
-    src/ui/PluginEditorWindows.cpp
     src/ui/MainView.cpp
     src/ui/HostedEditor.cpp)
 

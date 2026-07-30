@@ -12,7 +12,6 @@
 #include "state/RigFiles.h"
 #include "ui/LaneView.h"
 #include "ui/BlockWindow.h"
-#include "ui/PluginEditorWindows.h"
 #include "ui/Theme.h"
 
 namespace blockrig
@@ -50,12 +49,14 @@ private:
     void reportRestore(const rigstate::RestoreResult& result, const juce::String& error);
     void updatePanel();
     void showIoPanel(EndBlock::Kind kind);
+    void closeAllWindows();
+    /// Index of the first split stage, or -1 when the chain is a single path.
+    int firstSplitStage() const;
 
     BlockRigProcessor& mProcessor;
     juce::AudioDeviceManager* mDeviceManager;
 
     theme::Look mLook;
-    PluginEditorWindows mEditorWindows;
 
     juce::Label mTitle;
     CpuMeter mCpuMeter;

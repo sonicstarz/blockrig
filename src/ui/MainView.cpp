@@ -9,6 +9,120 @@ namespace blockrig
 {
 namespace
 {
+// The stock selector applies every change the instant it is made, which
+// is alarming when you are choosing between 34 channels on a live rig.
+// Wrap it so nothing sticks until Apply, and Revert puts it all back.
+class AudioSettingsPanel final : public juce::Component
+{
+public:
+    explicit AudioSettingsPanel(juce::AudioDeviceManager& deviceManager)
+        : mDeviceManager(deviceManager)
+        , mOriginalSetup(deviceManager.getAudioDeviceSetup())
+        , mOriginalDeviceType(deviceManager.getCurrentAudioDeviceType())
+    {
+        // showChannelsAsStereoPairs is off for inputs: a guitar is one
+        // channel, and forcing pair selection makes that impossible.
+        mSelector = std::make_unique<juce::AudioDeviceSelectorComponent>(
+    deviceManager, 1, 2, 0, 2, false, false, false, false);
+        addAndMakeVisible(*mSelector);
+
+        mNote.setText("Changes are previewed live. Apply keeps them; Revert restores what you had.",
+              juce::dontSendNotification);
+        mNote.setFont(juce::FontOptions(11.5f));
+        mNote.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        addAndMakeVisible(mNote);
+
+        mApply.setButtonText("Apply");
+        mApply.onClick = [this] { close(); };
+        addAndMakeVisible(mApply);
+
+        mRevert.setButtonText("Revert");
+        mRevert.onClick = [this] {
+    if (mOriginalDeviceType.isNotEmpty()
+        && mDeviceManager.getCurrentAudioDeviceType() != mOriginalDeviceType)
+        mDeviceManager.setCurrentAudioDeviceType(mOriginalDeviceType, true);
+
+    mDeviceManager.setAudioDeviceSetup(mOriginalSetup, true);
+    close();
+        };
+        addAndMakeVisible(mRevert);
+
+        setSize(520, 420);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced(theme::metrics::gap);
+        auto buttons = area.removeFromBottom(34);
+        mApply.setBounds(buttons.removeFromRight(90).reduced(2));
+        mRevert.setBounds(buttons.removeFromRight(90).reduced(2));
+        area.removeFromBottom(4);
+        mNote.setBounds(area.removeFromBottom(18));
+        mSelector->setBounds(area);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(theme::colours::background); }
+
+private:
+    void close()
+    {
+        if (auto* dialog = findParentComponentOfClass<juce::DialogWindow>())
+    dialog->exitModalState(0);
+    }
+
+    juce::AudioDeviceManager& mDeviceManager;
+    juce::AudioDeviceManager::AudioDeviceSetup mOriginalSetup;
+    juce::String mOriginalDeviceType;
+    std::unique_ptr<juce::AudioDeviceSelectorComponent> mSelector;
+    juce::Label mNote;
+    juce::TextButton mApply, mRevert;
+};
+
+
+/// Holds a hosted plug-in's own editor.
+///
+/// Owns it, because createEditorIfNeeded() hands over a pointer the caller must
+/// delete - the processor only keeps a weak reference. Watches it for size
+/// changes too: plug-ins with resizable interfaces change their own bounds, and
+/// the window around them has to follow or the interface gets clipped.
+class HostedPluginEditor final : public juce::Component
+                               , private juce::ComponentListener
+{
+public:
+    explicit HostedPluginEditor(std::unique_ptr<juce::AudioProcessorEditor> editor)
+        : mEditor(std::move(editor))
+    {
+        addAndMakeVisible(*mEditor);
+        mEditor->setTopLeftPosition(0, 0);
+        mEditor->addComponentListener(this);
+        setSize(mEditor->getWidth(), mEditor->getHeight());
+    }
+
+    ~HostedPluginEditor() override
+    {
+        mEditor->removeComponentListener(this);
+    }
+
+    void resized() override
+    {
+        // Centre rather than stretch: an editor that is not resizable must not be
+        // distorted to fill the window.
+        mEditor->setTopLeftPosition((getWidth() - mEditor->getWidth()) / 2,
+                                    juce::jmax(0, (getHeight() - mEditor->getHeight()) / 2));
+    }
+
+    std::function<void(int, int)> onEditorResized;
+
+private:
+    void componentMovedOrResized(juce::Component&, bool, bool wasResized) override
+    {
+        if (wasResized && onEditorResized)
+            onEditorResized(mEditor->getWidth(), mEditor->getHeight());
+    }
+
+    std::unique_ptr<juce::AudioProcessorEditor> mEditor;
+};
+
 /// Controls for the Input or Output end of the lane: what the chain is fed from
 /// and what it drives. In the plug-in build the device side is the host's job, so
 /// only the trim is offered.
@@ -158,75 +272,6 @@ private:
     {
         if (mDeviceManager == nullptr)
             return;
-
-        // The stock selector applies every change the instant it is made, which
-        // is alarming when you are choosing between 34 channels on a live rig.
-        // Wrap it so nothing sticks until Apply, and Revert puts it all back.
-        class AudioSettingsPanel final : public juce::Component
-        {
-        public:
-            explicit AudioSettingsPanel(juce::AudioDeviceManager& deviceManager)
-                : mDeviceManager(deviceManager)
-                , mOriginalSetup(deviceManager.getAudioDeviceSetup())
-                , mOriginalDeviceType(deviceManager.getCurrentAudioDeviceType())
-            {
-                // showChannelsAsStereoPairs is off for inputs: a guitar is one
-                // channel, and forcing pair selection makes that impossible.
-                mSelector = std::make_unique<juce::AudioDeviceSelectorComponent>(
-                    deviceManager, 1, 2, 0, 2, false, false, false, false);
-                addAndMakeVisible(*mSelector);
-
-                mNote.setText("Changes are previewed live. Apply keeps them; Revert restores what you had.",
-                              juce::dontSendNotification);
-                mNote.setFont(juce::FontOptions(11.5f));
-                mNote.setColour(juce::Label::textColourId, theme::colours::textFaint);
-                addAndMakeVisible(mNote);
-
-                mApply.setButtonText("Apply");
-                mApply.onClick = [this] { close(); };
-                addAndMakeVisible(mApply);
-
-                mRevert.setButtonText("Revert");
-                mRevert.onClick = [this] {
-                    if (mOriginalDeviceType.isNotEmpty()
-                        && mDeviceManager.getCurrentAudioDeviceType() != mOriginalDeviceType)
-                        mDeviceManager.setCurrentAudioDeviceType(mOriginalDeviceType, true);
-
-                    mDeviceManager.setAudioDeviceSetup(mOriginalSetup, true);
-                    close();
-                };
-                addAndMakeVisible(mRevert);
-
-                setSize(520, 420);
-            }
-
-            void resized() override
-            {
-                auto area = getLocalBounds().reduced(theme::metrics::gap);
-                auto buttons = area.removeFromBottom(34);
-                mApply.setBounds(buttons.removeFromRight(90).reduced(2));
-                mRevert.setBounds(buttons.removeFromRight(90).reduced(2));
-                area.removeFromBottom(4);
-                mNote.setBounds(area.removeFromBottom(18));
-                mSelector->setBounds(area);
-            }
-
-            void paint(juce::Graphics& g) override { g.fillAll(theme::colours::background); }
-
-        private:
-            void close()
-            {
-                if (auto* dialog = findParentComponentOfClass<juce::DialogWindow>())
-                    dialog->exitModalState(0);
-            }
-
-            juce::AudioDeviceManager& mDeviceManager;
-            juce::AudioDeviceManager::AudioDeviceSetup mOriginalSetup;
-            juce::String mOriginalDeviceType;
-            std::unique_ptr<juce::AudioDeviceSelectorComponent> mSelector;
-            juce::Label mNote;
-            juce::TextButton mApply, mRevert;
-        };
 
         juce::DialogWindow::LaunchOptions options;
         options.content.setOwned(new AudioSettingsPanel(*mDeviceManager));
@@ -605,7 +650,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     , mCpuMeter(processor)
     , mHeaderMeters(processor)
     , mTransportBar(processor)
-    , mLane(processor, mEditorWindows)
+    , mLane(processor)
 {
     setLookAndFeel(&mLook);
 
@@ -677,13 +722,11 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     }
 
     mLane.onSelectionChanged = [this] { updatePanel(); };
-    mLane.onEndBlockSelected = [this](EndBlock::Kind kind) {
-        openUtilityWindow(kind == EndBlock::Kind::input ? "Input" : "Output", BlockCategory::utility,
-                          std::make_unique<IoPanel>(mProcessor, kind, mDeviceManager));
-    };
+    mLane.onEndBlockSelected = [this](EndBlock::Kind kind) { showIoPanel(kind); };
 
     // A block opens as a window rather than filling a panel below the lane.
     mLane.onBlockActivated = [this](juce::String uid) { openBlockWindow(uid); };
+    mLane.isBlockWindowOpen = [this](const juce::String& uid) { return findWindowForBlock(uid) != nullptr; };
 
     mProcessor.onChainChanged = [this] {
         mLane.refresh();
@@ -713,15 +756,13 @@ bool MainView::keyPressed(const juce::KeyPress& key, juce::Component*)
     // complaint about hosts, so this is worth having.
     if (key == juce::KeyPress::escapeKey)
     {
-        mEditorWindows.closeFrontmost();
-        mLane.refresh();
+        closeActiveWindow();
         return true;
     }
 
     if (key == juce::KeyPress('w', juce::ModifierKeys::commandModifier | juce::ModifierKeys::altModifier, 0))
     {
-        mEditorWindows.closeAll();
-        mLane.refresh();
+        closeAllWindows();
         return true;
     }
 
@@ -730,7 +771,8 @@ bool MainView::keyPressed(const juce::KeyPress& key, juce::Component*)
         const auto uid = mLane.getSelectedUid();
         if (uid.isNotEmpty())
         {
-            mEditorWindows.close(uid);
+            if (auto* window = findWindowForBlock(uid))
+                closeWindow(window);
             mProcessor.removeBlock(uid);
             return true;
         }
@@ -807,21 +849,25 @@ void MainView::openBlockWindow(const juce::String& uid)
     {
         content = std::make_unique<NamBlockPanel>(*nam);
         width = 700;
-        height = 300;
+        height = 200 + BlockWindow::kTitleBarHeight;
     }
     else if (plugin->hasEditor())
     {
         // The plug-in's own interface, sized to whatever it asks for.
-        auto* editor = plugin->createEditorIfNeeded();
-
-        if (editor != nullptr)
+        if (auto* editor = plugin->createEditorIfNeeded())
         {
-            width = juce::jlimit(280, 1100, editor->getWidth());
-            height = juce::jlimit(180, 800, editor->getHeight() + BlockWindow::kTitleBarHeight);
+            width = juce::jlimit(280, 1200, editor->getWidth());
+            height = juce::jlimit(180, 900, editor->getHeight()) + BlockWindow::kTitleBarHeight;
 
-            auto holder = std::make_unique<juce::Component>();
-            holder->addAndMakeVisible(editor);
-            editor->setTopLeftPosition(0, 0);
+            auto holder = std::make_unique<HostedPluginEditor>(
+                std::unique_ptr<juce::AudioProcessorEditor>(editor));
+
+            holder->onEditorResized = [this, uid](int editorWidth, int editorHeight) {
+                if (auto* window = findWindowForBlock(uid))
+                    window->setSize(juce::jlimit(280, 1200, editorWidth),
+                                    juce::jlimit(180, 900, editorHeight) + BlockWindow::kTitleBarHeight);
+            };
+
             content = std::move(holder);
         }
     }
@@ -1169,13 +1215,49 @@ void MainView::reportRestore(const rigstate::RestoreResult& result, const juce::
                                       nullptr);
 }
 
+void MainView::closeAllWindows()
+{
+    while (!mWindows.empty())
+        closeWindow(mWindows.back().get());
+}
+
+void MainView::showIoPanel(EndBlock::Kind kind)
+{
+    openUtilityWindow(kind == EndBlock::Kind::input ? "Input" : "Output", BlockCategory::utility,
+                      std::make_unique<IoPanel>(mProcessor, kind, mDeviceManager));
+}
+
+int MainView::firstSplitStage() const
+{
+    const auto& chain = mProcessor.getChain();
+
+    for (int stage = 0; stage < chain.getNumStages(); ++stage)
+        if (chain.isStageSplit(stage))
+            return stage;
+
+    return -1;
+}
+
 void MainView::showSettings()
 {
     juce::PopupMenu menu;
 
+    if (mDeviceManager != nullptr)
+    {
+        menu.addSectionHeader("Audio");
+        menu.addItem(10, "Audio device, inputs and outputs...");
+    }
+
+    menu.addSectionHeader("Signal");
+    menu.addItem(11, "Input...");
+    menu.addItem(12, "Output...");
+
+    const auto splitStage = firstSplitStage();
+    menu.addItem(13, "Split A / B...", splitStage >= 0);
+    menu.addSeparator();
+
     menu.addItem(1, "Rescan plug-ins...");
-    menu.addItem(2, "Keep plug-in editors on top", true, mEditorWindows.getAlwaysOnTop());
-    menu.addItem(3, "Close all plug-in editors");
+    menu.addItem(3, "Close all windows", !mWindows.empty());
     menu.addSeparator();
 
     const auto denylisted = mProcessor.getCatalog().getDenylist().size();
@@ -1185,16 +1267,23 @@ void MainView::showSettings()
                                        + " plug-ins available")
                      .setEnabled(false));
 
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mSettingsButton), [this](int choice) {
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mSettingsButton),
+                       [this, splitStage](int choice) {
         switch (choice)
         {
             case 1: startScan(); break;
-            case 2:
-                mEditorWindows.setAlwaysOnTop(!mEditorWindows.getAlwaysOnTop());
+            case 3: closeAllWindows(); break;
+            case 10:
+                if (mDeviceManager != nullptr)
+                    openUtilityWindow("Audio device", BlockCategory::utility,
+                                      std::make_unique<AudioSettingsPanel>(*mDeviceManager));
                 break;
-            case 3:
-                mEditorWindows.closeAll();
-                mLane.refresh();
+            case 11: showIoPanel(EndBlock::Kind::input); break;
+            case 12: showIoPanel(EndBlock::Kind::output); break;
+            case 13:
+                if (splitStage >= 0)
+                    openUtilityWindow("Split A / B", BlockCategory::utility,
+                                      std::make_unique<SplitPanel>(mProcessor, splitStage));
                 break;
             case 4:
                 mProcessor.getCatalog().clearDenylist();

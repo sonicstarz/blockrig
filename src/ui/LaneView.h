@@ -11,7 +11,6 @@
 
 namespace blockrig
 {
-class PluginEditorWindows;
 
 /// A tile in the lane. Draws its own state: selected, bypassed, editor-open,
 /// error, and a live activity bar.
@@ -142,7 +141,7 @@ class LaneView final : public juce::Component
                      , private juce::Timer
 {
 public:
-    LaneView(BlockRigProcessor& processor, PluginEditorWindows& editorWindows);
+    explicit LaneView(BlockRigProcessor& processor);
     ~LaneView() override;
 
     void paint(juce::Graphics&) override;
@@ -164,6 +163,10 @@ public:
     std::function<void()> onSelectionChanged;
     /// A block was chosen for editing, which now means "open its window".
     std::function<void(juce::String uid)> onBlockActivated;
+
+    /// Asked when drawing a tile, so it can show which blocks already have a
+    /// window open. The lane does not own windows, so it has to ask.
+    std::function<bool(const juce::String& uid)> isBlockWindowOpen;
     /// Fires when the user selects an end block (empty uid means input/output).
     std::function<void(EndBlock::Kind)> onEndBlockSelected;
 
@@ -181,7 +184,6 @@ private:
     int rowHeight() const;
 
     BlockRigProcessor& mProcessor;
-    PluginEditorWindows& mEditorWindows;
 
     EndBlock mInputBlock{EndBlock::Kind::input};
     EndBlock mOutputBlock{EndBlock::Kind::output};
