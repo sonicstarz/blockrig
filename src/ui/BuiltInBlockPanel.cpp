@@ -57,12 +57,14 @@ IrBlockPanel::IrBlockPanel(IrBlockProcessor& processor)
     addAndMakeVisible(mClearButton);
 
     styleKnob(mMix);
+    mMix.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff2ebfa5)); // cab teal
     addAndMakeVisible(mMix);
     styleCaption(mMixLabel, "Mix");
     addAndMakeVisible(mMixLabel);
     mMixAtt = std::make_unique<SliderAttachment>(mProcessor.getValueTreeState(), "mix", mMix);
 
     styleKnob(mOutput);
+    mOutput.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff2ebfa5));
     addAndMakeVisible(mOutput);
     styleCaption(mOutputLabel, "Output");
     addAndMakeVisible(mOutputLabel);
@@ -264,12 +266,14 @@ UtilityBlockPanel::UtilityBlockPanel(UtilityBlockProcessor& processor)
     auto& state = processor.getValueTreeState();
 
     styleKnob(mGain);
+    mGain.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff7b8494)); // utility grey
     addAndMakeVisible(mGain);
     styleCaption(mGainLabel, "Gain");
     addAndMakeVisible(mGainLabel);
     mGainAtt = std::make_unique<SliderAttachment>(state, "gain", mGain);
 
     styleKnob(mPan);
+    mPan.setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff7b8494));
     addAndMakeVisible(mPan);
     styleCaption(mPanLabel, "Pan");
     addAndMakeVisible(mPanLabel);
@@ -368,6 +372,7 @@ void EqBlockPanel::addControl(juce::AudioProcessorValueTreeState& state, const j
     {
         auto slider = std::make_unique<juce::Slider>();
         styleKnob(*slider);
+        slider->setColour(juce::Slider::rotarySliderFillColourId, juce::Colour(0xff4c8dff)); // EQ blue
         control->sliderAtt =
             std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(state, id, *slider);
         addAndMakeVisible(*slider);
