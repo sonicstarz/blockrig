@@ -49,8 +49,9 @@ juce::Rectangle<int> BlockWindow::getTitleBarBounds() const
 
 void BlockWindow::mouseDown(const juce::MouseEvent& event)
 {
-    // Only the title bar drags; dragging from the body would fight the controls.
-    if (getTitleBarBounds().contains(event.getPosition()))
+    // Only the title bar drags — and docked editors do not drag at all; the
+    // dock is their place.
+    if (!mDocked && getTitleBarBounds().contains(event.getPosition()))
         mDragger.startDraggingComponent(this, event);
 
     toFront(true);
@@ -58,7 +59,7 @@ void BlockWindow::mouseDown(const juce::MouseEvent& event)
 
 void BlockWindow::mouseDrag(const juce::MouseEvent& event)
 {
-    if (getTitleBarBounds().contains(event.getMouseDownPosition()))
+    if (!mDocked && getTitleBarBounds().contains(event.getMouseDownPosition()))
         mDragger.dragComponent(this, event, &mConstrainer);
 }
 
@@ -66,42 +67,50 @@ void BlockWindow::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat().reduced(0.5f);
     const auto accent = getCategoryColour(mCategory);
+    const auto radius = theme::metrics::radiusXl;
 
-    // A soft drop shadow, so a floating window reads as above the rig rather
-    // than pasted into it.
-    g.setColour(juce::Colours::black.withAlpha(0.45f));
-    g.fillRoundedRectangle(bounds.translated(0.0f, 3.0f).expanded(2.0f), theme::metrics::cornerRadius + 2.0f);
+    if (!mDocked)
+    {
+        // Floating panels sit above the rig; a shadow says so.
+        g.setColour(juce::Colours::black.withAlpha(0.55f));
+        g.fillRoundedRectangle(bounds.translated(0.0f, 8.0f).expanded(4.0f), radius + 2.0f);
+    }
 
-    g.setColour(theme::colours::panel);
-    g.fillRoundedRectangle(bounds, theme::metrics::cornerRadius);
+    // Glass: layered translucent fills approximate the backdrop blur the design
+    // asks for, which JUCE cannot do.
+    g.setColour(juce::Colour(0xff15131d).withAlpha(0.92f));
+    g.fillRoundedRectangle(bounds, radius);
+    g.setColour(mPinned ? accent.withAlpha(0.6f) : theme::colours::outline);
+    g.drawRoundedRectangle(bounds, radius, mPinned ? 1.6f : 1.0f);
 
-    g.setColour(mPinned ? accent.withAlpha(0.7f) : theme::colours::outlineStrong);
-    g.drawRoundedRectangle(bounds, theme::metrics::cornerRadius, mPinned ? 1.8f : 1.2f);
-
-    // Title bar, tinted by the block's category.
+    // Category header strip: 8% tint, 25% bottom border, and the solid bar.
     auto titleBar = bounds.removeFromTop(static_cast<float>(kTitleBarHeight));
-    g.setColour(accent.withAlpha(0.16f));
-    g.fillRoundedRectangle(titleBar.withHeight(titleBar.getHeight() + 8.0f),
-                           theme::metrics::cornerRadius);
-    g.setColour(theme::colours::outline);
-    g.fillRect(titleBar.getX(), titleBar.getBottom(), titleBar.getWidth(), 1.0f);
+    g.setColour(accent.withAlpha(0.08f));
+    g.fillRoundedRectangle(titleBar, radius);
+    g.setColour(accent.withAlpha(0.25f));
+    g.fillRect(titleBar.getX(), titleBar.getBottom() - 1.0f, titleBar.getWidth(), 1.0f);
 
-    auto text = titleBar.reduced(9.0f, 0.0f);
+    auto text = titleBar.reduced(14.0f, 0.0f);
     text.removeFromRight(84.0f); // room for the buttons
 
-    drawCategoryIcon(g, text.removeFromLeft(18.0f).reduced(1.0f, 6.0f), mCategory, accent, 1.3f);
-    text.removeFromLeft(6.0f);
+    // The 8×26 category bar with glow.
+    const juce::Rectangle<float> bar(text.getX(), titleBar.getCentreY() - 13.0f, 8.0f, 26.0f);
+    g.setColour(accent.withAlpha(0.35f));
+    g.fillRoundedRectangle(bar.expanded(2.5f), 5.0f);
+    g.setColour(accent);
+    g.fillRoundedRectangle(bar, 4.0f);
+    text.removeFromLeft(18.0f);
 
     g.setColour(theme::colours::text);
-    g.setFont(juce::FontOptions(12.5f, juce::Font::bold));
-    const auto titleWidth = juce::jmin(text.getWidth(), 190.0f);
+    g.setFont(theme::fonts::ui(16.0f, 700));
+    const auto titleWidth = juce::jmin(text.getWidth(), 220.0f);
     g.drawText(mTitle, text.removeFromLeft(titleWidth), juce::Justification::centredLeft, true);
 
     if (mSubtitle.isNotEmpty())
     {
         g.setColour(theme::colours::textFaint);
-        g.setFont(juce::FontOptions(10.5f));
-        g.drawText(mSubtitle, text, juce::Justification::centredLeft, true);
+        g.setFont(theme::fonts::mono(11.0f));
+        g.drawText(mSubtitle, text.withTrimmedLeft(8.0f), juce::Justification::centredLeft, true);
     }
 }
 

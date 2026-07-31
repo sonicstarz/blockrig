@@ -641,9 +641,10 @@ MainView::WindowLayer::WindowLayer()
 
 bool MainView::WindowLayer::hasModalWindow() const
 {
+    // Docked editors live WITH the rig; only floating utility panels dim it.
     for (auto* child : getChildren())
         if (auto* window = dynamic_cast<BlockWindow*>(child))
-            if (!window->isPinned())
+            if (!window->isPinned() && !window->isDocked())
                 return true;
 
     return false;
@@ -692,9 +693,8 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
 {
     setLookAndFeel(&mLook);
 
-    mTitle.setText("BLOCKRIG", juce::dontSendNotification);
-    mTitle.setFont(juce::FontOptions(17.0f, juce::Font::bold));
-    mTitle.setColour(juce::Label::textColourId, theme::colours::accent);
+    // The mark alone; the wordmark lives on boot and home. Clicking goes home.
+    mTitle.setText("", juce::dontSendNotification);
     mTitle.setTooltip("Back to the home screen");
     mTitle.setInterceptsMouseClicks(true, false);
     mTitle.addMouseListener(this, false);
@@ -737,8 +737,11 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     addAndMakeVisible(mSaveButton);
 
     mGigButton.setTooltip("Performance view: big buttons, nothing editable.");
+    mGigButton.getProperties().set("primary", true);
     mGigButton.onClick = [this] { enterGigView(); };
     addAndMakeVisible(mGigButton);
+
+    mSettingsButton.setButtonText(juce::String::fromUTF8("\xe2\x8b\xaf")); // ⋯
 
     // Snapshots sit right under the header: scenes are a performance control.
     mSnapshots.openPanel = [this](std::unique_ptr<juce::Component> panel, juce::String title,
@@ -1054,9 +1057,16 @@ void MainView::openBlockWindow(const juce::String& uid)
         subtitle = "no interface";
     }
 
+    // One docked editor at a time: opening a block closes the previous one
+    // unless it was pinned. (4c: "Pin keeps it while opening another".)
+    for (int i = static_cast<int>(mWindows.size()); --i >= 0;)
+        if (mWindows[static_cast<size_t>(i)]->isDocked() && !mWindows[static_cast<size_t>(i)]->isPinned())
+            closeWindow(mWindows[static_cast<size_t>(i)].get());
+
     auto window = std::make_unique<BlockWindow>(block->getDisplayName(), subtitle, category,
                                                 std::move(content));
     window->blockUid = uid;
+    window->setDocked(true);
     window->setSize(width, height);
 
     auto* windowPtr = window.get();
@@ -1103,15 +1113,19 @@ void MainView::closeWindow(BlockWindow* window)
 
 void MainView::closeActiveWindow()
 {
-    // The topmost unpinned window is the one the X and the backdrop refer to.
-    for (int i = static_cast<int>(mWindows.size()); --i >= 0;)
-    {
-        if (!mWindows[static_cast<size_t>(i)]->isPinned())
+    // Floating panels first - they are what the dim refers to - then the
+    // docked editor.
+    for (const bool docked : {false, true})
+        for (int i = static_cast<int>(mWindows.size()); --i >= 0;)
         {
-            closeWindow(mWindows[static_cast<size_t>(i)].get());
-            return;
+            auto* window = mWindows[static_cast<size_t>(i)].get();
+
+            if (!window->isPinned() && window->isDocked() == docked)
+            {
+                closeWindow(window);
+                return;
+            }
         }
-    }
 }
 
 void MainView::togglePin(BlockWindow* window)
@@ -1147,35 +1161,29 @@ void MainView::togglePin(BlockWindow* window)
 
 void MainView::layOutWindows()
 {
-    // Pinned windows tile the canvas below the lane; unpinned ones float where
-    // the user left them.
-    const auto canvas = mWindowLayer.getLocalBounds().withTrimmedTop(mLane.getBottom()
-                                                                     - mWindowLayer.getY()
-                                                                     + theme::metrics::gap);
+    // Docked editors stack from the bottom of the window layer, full width:
+    // the newest (unpinned) sits lowest, pinned ones stack above it.
+    const auto layerBounds = mWindowLayer.getLocalBounds().reduced(theme::metrics::padding, 0);
+    int bottom = mWindowLayer.getHeight() - theme::metrics::gap;
 
-    std::vector<BlockWindow*> pinned;
-    for (const auto& window : mWindows)
-        if (window->isPinned())
-            pinned.push_back(window.get());
-
-    if (!pinned.empty() && canvas.getHeight() > 80)
+    for (int i = static_cast<int>(mWindows.size()); --i >= 0;)
     {
-        const int columns = pinned.size() <= 2 ? static_cast<int>(pinned.size()) : 3;
-        const int rows = (static_cast<int>(pinned.size()) + columns - 1) / columns;
-        const int cellWidth = canvas.getWidth() / juce::jmax(1, columns);
-        const int cellHeight = canvas.getHeight() / juce::jmax(1, rows);
+        auto& window = mWindows[static_cast<size_t>(i)];
 
-        for (size_t i = 0; i < pinned.size(); ++i)
-        {
-            const int column = static_cast<int>(i) % columns;
-            const int row = static_cast<int>(i) / columns;
+        if (!window->isDocked())
+            continue;
 
-            pinned[i]->setBounds(juce::Rectangle<int>(canvas.getX() + column * cellWidth,
-                                                     canvas.getY() + row * cellHeight, cellWidth,
-                                                     cellHeight)
-                                     .reduced(theme::metrics::gap / 2));
-        }
+        const auto height = juce::jmin(window->getHeight(), mWindowLayer.getHeight() / 2);
+        window->setBounds(layerBounds.getX(), bottom - height, layerBounds.getWidth(), height);
+        bottom -= height + 8;
     }
+
+    // Floating utilities centre over the rig.
+    for (auto& window : mWindows)
+        if (!window->isDocked())
+            window->setCentrePosition(mWindowLayer.getWidth() / 2,
+                                      juce::jmax(window->getHeight() / 2 + 10,
+                                                 mWindowLayer.getHeight() / 2 - 40));
 
     const bool modal = mWindowLayer.hasModalWindow();
     mWindowLayer.setInterceptsMouseClicks(modal, true);
@@ -1249,14 +1257,24 @@ void MainView::RigNameButton::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds().toFloat();
 
-    g.setColour(theme::colours::panelRaised.withAlpha(0.6f));
-    g.fillRoundedRectangle(bounds.reduced(0.0f, 3.0f), theme::metrics::smallCornerRadius);
+    g.setColour(theme::colours::panelRaised.withAlpha(0.7f));
+    g.fillRoundedRectangle(bounds.reduced(0.0f, 2.0f), theme::metrics::radiusMd);
+    g.setColour(theme::colours::outline);
+    g.drawRoundedRectangle(bounds.reduced(0.0f, 2.0f), theme::metrics::radiusMd, 1.0f);
 
     g.setColour(theme::colours::text);
-    g.setFont(juce::FontOptions(14.5f, juce::Font::bold));
-    // The asterisk is the universal "unsaved" mark; a tinted dot would need
-    // explaining, this does not.
-    g.drawText(mName + (mDirty ? " *" : ""), bounds, juce::Justification::centred, true);
+    g.setFont(theme::fonts::ui(14.0f, 700));
+
+    const auto textWidth = juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), mName);
+    g.drawText(mName, bounds, juce::Justification::centred, true);
+
+    // Unsaved: the amber dot after the name, per the design.
+    if (mDirty)
+    {
+        g.setColour(theme::colours::accent);
+        g.fillEllipse(bounds.getCentreX() + textWidth * 0.5f + 7.0f, bounds.getCentreY() - 2.5f, 5.0f,
+                      5.0f);
+    }
 }
 
 void MainView::startScan()
@@ -1350,6 +1368,18 @@ juce::Array<juce::File> MainView::listRigs() const
                                                "*" + juce::String(rigfiles::kFileExtension));
     rigs.sort();
     return rigs;
+}
+
+juce::File MainView::activateSetlist(const juce::File& setlistFile)
+{
+    mHasSetlist = mSetlist.loadFrom(setlistFile);
+    refreshHeader();
+
+    for (int i = 0; mHasSetlist && i < mSetlist.rigNames.size(); ++i)
+        if (const auto file = mSetlist.getRigFile(i); file.existsAsFile())
+            return file;
+
+    return {};
 }
 
 void MainView::showSetlistMenu()
@@ -1872,9 +1902,13 @@ void MainView::paint(juce::Graphics& g)
                                            static_cast<float>(getHeight()), false));
     g.fillAll();
 
-    // The header band sits slightly proud of the rig.
-    g.setColour(theme::colours::panel.withAlpha(0.55f));
+    // Glass header band with a hairline bottom edge.
+    g.setColour(juce::Colour(0xff15131d).withAlpha(0.88f));
     g.fillRect(0, 0, getWidth(), theme::metrics::headerHeight);
+    g.setColour(theme::colours::hairline);
+    g.fillRect(0, theme::metrics::headerHeight - 1, getWidth(), 1);
+
+    theme::drawLogoMark(g, mTitle.getBounds().toFloat().withSizeKeepingCentre(26.0f, 26.0f));
 
     // Header and footer rules.
     g.setColour(theme::colours::outline);
@@ -1890,12 +1924,19 @@ void MainView::resized()
 
     auto header = area.removeFromTop(theme::metrics::headerHeight).reduced(theme::metrics::padding, 0);
 
-    // Left: the kill switch, the wordmark, and the clock.
-    mMuteButton.setBounds(header.removeFromLeft(76).withSizeKeepingCentre(76, 30));
+    // 4c order: mark · preset pill · BPM cluster … meters · Tuner · Gig · ⋯
+    mTitle.setBounds(header.removeFromLeft(34).withSizeKeepingCentre(34, 30));
     header.removeFromLeft(theme::metrics::gap);
-    mTitle.setBounds(header.removeFromLeft(112).withSizeKeepingCentre(112, 24));
+
+    auto pill = header.removeFromLeft(250).withSizeKeepingCentre(250, 32);
+    mPrevRig.setBounds(pill.removeFromLeft(30));
+    mNextRig.setBounds(pill.removeFromRight(30));
+    mRigName.setBounds(pill.reduced(2, 0));
+
     header.removeFromLeft(theme::metrics::gap);
     mTransportBar.setBounds(header.removeFromLeft(216).withSizeKeepingCentre(216, 40));
+    header.removeFromLeft(theme::metrics::gap);
+    mMuteButton.setBounds(header.removeFromLeft(64).withSizeKeepingCentre(64, 28));
 
     // Right: watch, tune, save, configure.
     if (mGigView != nullptr)
@@ -1912,11 +1953,6 @@ void MainView::resized()
     mHeaderMeters.setBounds(header.removeFromRight(176).withSizeKeepingCentre(176, 46));
     header.removeFromRight(theme::metrics::gap);
 
-    // Centre: which rig this is, and the way to the next one.
-    auto centre = header.withSizeKeepingCentre(juce::jmin(header.getWidth(), 320), 30);
-    mPrevRig.setBounds(centre.removeFromLeft(30));
-    mNextRig.setBounds(centre.removeFromRight(30));
-    mRigName.setBounds(centre.reduced(4, 0));
 
     mSnapshots.setBounds(area.removeFromTop(SnapshotStrip::kHeight));
 

@@ -49,25 +49,27 @@ void HeaderMeters::paint(juce::Graphics& g)
     const auto rowHeight = bounds.getHeight() / 4.0f;
 
     const auto drawRow = [&g](juce::Rectangle<float> row, const juce::String& label, float level) {
-        g.setColour(theme::colours::textFaint);
-        g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
-        g.drawText(label, row.removeFromLeft(30.0f), juce::Justification::centredLeft, false);
+        g.setColour(theme::colours::textGhost);
+        g.setFont(theme::fonts::ui(10.0f, 500));
+        g.drawText(label, row.removeFromLeft(34.0f), juce::Justification::centredLeft, false);
 
-        g.setColour(level > 0.0002f ? theme::colours::text : theme::colours::textFaint);
-        g.setFont(juce::FontOptions(10.0f));
-        g.drawText(formatLevel(level), row.removeFromRight(32.0f), juce::Justification::centredRight, false);
+        g.setColour(level > 0.0002f ? theme::colours::textDim : theme::colours::textGhost);
+        g.setFont(theme::fonts::mono(10.0f));
+        g.drawText(formatLevel(level), row.removeFromRight(34.0f), juce::Justification::centredRight, false);
 
-        theme::drawLevelMeter(g, row.reduced(3.0f, row.getHeight() * 0.28f), level);
+        // 4 px mini bar per the header spec.
+        theme::drawLevelMeter(g, row.withSizeKeepingCentre(row.getWidth() - 6.0f, 4.0f), level);
     };
 
-    drawRow(bounds.removeFromTop(rowHeight), "IN", mInput);
-    drawRow(bounds.removeFromTop(rowHeight), "OUT L", mOutputLeft);
-    drawRow(bounds.removeFromTop(rowHeight), "OUT R", mOutputRight);
+    drawRow(bounds.removeFromTop(rowHeight), "In", mInput);
+    drawRow(bounds.removeFromTop(rowHeight), "Out L", mOutputLeft);
+    drawRow(bounds.removeFromTop(rowHeight), "Out R", mOutputRight);
 
     auto width = bounds;
     g.setColour(theme::colours::textFaint);
     g.setFont(juce::FontOptions(9.0f, juce::Font::bold));
-    g.drawText("WIDTH", width.removeFromLeft(30.0f), juce::Justification::centredLeft, false);
+    g.setFont(theme::fonts::ui(10.0f, 500));
+    g.drawText("Width", width.removeFromLeft(34.0f), juce::Justification::centredLeft, false);
 
     const bool mono = mWidth < 0.01f;
     g.setColour(mono ? theme::colours::textFaint : theme::colours::good);

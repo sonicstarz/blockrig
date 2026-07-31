@@ -79,6 +79,17 @@ add_subdirectory(third_party/JUCE)
 # target, so the standalone can own its audio device while the plugin build stays
 # a plain juce_add_plugin.
 # ---------------------------------------------------------------------------
+juce_add_binary_data(BlockRigAssets
+    NAMESPACE BinaryData
+    SOURCES
+        assets/fonts/SpaceGrotesk-Regular.ttf
+        assets/fonts/SpaceGrotesk-Medium.ttf
+        assets/fonts/SpaceGrotesk-Bold.ttf
+        assets/fonts/IBMPlexMono-Regular.ttf
+        assets/fonts/IBMPlexMono-Medium.ttf
+        assets/fonts/IBMPlexMono-SemiBold.ttf
+        assets/fonts/IBMPlexMono-Bold.ttf)
+
 set(BLOCKRIG_SOURCES
     src/BlockRigProcessor.cpp
     src/midi/MidiEngine.cpp
@@ -161,6 +172,7 @@ target_compile_definitions(BlockRigApp PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1)
 
 target_link_libraries(BlockRigApp PRIVATE
+    BlockRigAssets
     juce::juce_cryptography
     $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
     juce::juce_audio_utils
@@ -197,6 +209,7 @@ target_link_libraries(BlockRigPlugin PUBLIC
     $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>)
 
 target_link_libraries(BlockRigPlugin PRIVATE
+    BlockRigAssets
     juce::juce_cryptography
     juce::juce_audio_utils
     juce::juce_audio_processors

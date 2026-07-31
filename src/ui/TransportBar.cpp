@@ -14,12 +14,12 @@ TransportBar::TransportBar(BlockRigProcessor& processor)
     : mProcessor(processor)
 {
     mBpmLabel.setText("BPM", juce::dontSendNotification);
-    mBpmLabel.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+    mBpmLabel.setFont(theme::fonts::ui(10.0f, 500));
     mBpmLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
     mBpmLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(mBpmLabel);
 
-    mBpmValue.setFont(juce::FontOptions(17.0f, juce::Font::bold));
+    mBpmValue.setFont(theme::fonts::mono(15.0f, 600));
     mBpmValue.setJustificationType(juce::Justification::centredLeft);
     mBpmValue.setTooltip("Tempo for synced delays and modulation. Drag up and down to change, "
                          "shift-drag for fine control, double-click to type.");

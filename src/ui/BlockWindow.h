@@ -33,10 +33,15 @@ public:
     void setPinned(bool shouldBePinned);
     bool isPinned() const { return mPinned; }
 
+    /// Docked editors sit in the bottom strip (block editors); floating ones
+    /// centre over the rig (utility panels) and dim the backdrop.
+    void setDocked(bool shouldBeDocked) { mDocked = shouldBeDocked; }
+    bool isDocked() const { return mDocked; }
+
     std::function<void()> onClose;
     std::function<void()> onTogglePin;
 
-    static constexpr int kTitleBarHeight = 30;
+    static constexpr int kTitleBarHeight = 40;
     static constexpr int kDefaultWidth = 430;
     static constexpr int kDefaultHeight = 300;
 
@@ -50,6 +55,7 @@ private:
     juce::TextButton mClose{"X"};
     juce::TextButton mPin{"Pin"};
     bool mPinned = false;
+    bool mDocked = false;
 
     juce::ComponentDragger mDragger;
     juce::ComponentBoundsConstrainer mConstrainer;

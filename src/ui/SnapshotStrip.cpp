@@ -49,20 +49,31 @@ public:
         }
     }
 
+    void setIndexLetter(int index) { mLetter = juce::String::charToString(static_cast<juce::juce_wchar>('A' + (index % 26))); }
+
     void paint(juce::Graphics& g) override
     {
         auto bounds = getLocalBounds().toFloat().reduced(1.0f, 4.0f);
+        const auto radius = 12.0f;
 
-        const auto fill = mActive ? theme::colours::accent.withAlpha(0.22f) : theme::colours::panelRaised;
-        g.setColour(fill);
-        g.fillRoundedRectangle(bounds, theme::metrics::smallCornerRadius);
+        if (mActive)
+        {
+            // Active pad: amber 12% fill, 2px border, glow.
+            g.setColour(theme::colours::accent.withAlpha(0.18f));
+            g.fillRoundedRectangle(bounds.expanded(2.0f), radius + 2.0f);
+            g.setColour(theme::colours::accent.withAlpha(0.12f));
+            g.fillRoundedRectangle(bounds, radius);
+        }
+        else
+        {
+            g.setColour(theme::colours::panel);
+            g.fillRoundedRectangle(bounds, radius);
+        }
 
-        // Edit mode gets a dashed border: these chips are now targets, not
-        // triggers, and they should look different before the click.
         if (mEditMode)
         {
             juce::Path outline;
-            outline.addRoundedRectangle(bounds, theme::metrics::smallCornerRadius);
+            outline.addRoundedRectangle(bounds, radius);
             const float dashes[] = {4.0f, 3.0f};
             juce::PathStrokeType(1.4f).createDashedStroke(outline, outline, dashes, 2);
             g.setColour(theme::colours::warn);
@@ -70,17 +81,26 @@ public:
         }
         else
         {
-            g.setColour(mActive ? theme::colours::accent : theme::colours::outlineStrong);
-            g.drawRoundedRectangle(bounds, theme::metrics::smallCornerRadius, mActive ? 1.6f : 1.0f);
+            g.setColour(mActive ? theme::colours::accent : theme::colours::outline);
+            g.drawRoundedRectangle(bounds, radius, mActive ? 2.0f : 1.0f);
         }
 
+        auto inner = bounds.reduced(10.0f, 3.0f);
+
+        // Letter in mono, then the name: the letter is what MIDI PC numbers map
+        // to, so it earns its place on the pad.
+        g.setColour(mActive ? theme::colours::accent : theme::colours::textGhost);
+        g.setFont(theme::fonts::mono(11.0f, 500));
+        g.drawText(mLetter, inner.removeFromLeft(14.0f), juce::Justification::centred, false);
+
         g.setColour(mActive ? theme::colours::text : theme::colours::textDim);
-        g.setFont(juce::FontOptions(12.5f, mActive ? juce::Font::bold : juce::Font::plain));
-        g.drawText(mName, bounds.reduced(6.0f, 0.0f), juce::Justification::centred, true);
+        g.setFont(theme::fonts::ui(14.0f, 700));
+        g.drawText(mName, inner.withTrimmedLeft(4.0f), juce::Justification::centredLeft, true);
     }
 
 private:
     juce::String mName;
+    juce::String mLetter;
     int mIndex;
     bool mActive = false;
     bool mEditMode = false;
@@ -274,6 +294,7 @@ void SnapshotStrip::rebuildChips()
     for (const auto& snapshot : bank.getSnapshots())
     {
         auto chip = std::make_unique<Chip>(snapshot.name, index);
+        chip->setIndexLetter(index);
         chip->setStates(index == bank.activeIndex, mEditMode);
         chip->onClick = [this](int chipIndex) { chipClicked(chipIndex); };
         chip->onMenu = [this](int chipIndex) { showChipMenu(chipIndex); };
@@ -442,18 +463,15 @@ void SnapshotStrip::showAddPanel()
 
 void SnapshotStrip::paint(juce::Graphics& g)
 {
-    g.setColour(theme::colours::panel.withAlpha(0.35f));
-    g.fillRect(getLocalBounds());
-
     g.setColour(theme::colours::textFaint);
-    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
-    g.drawText("SNAPSHOTS", getLocalBounds().removeFromLeft(74).reduced(theme::metrics::padding, 0),
+    g.setFont(theme::fonts::ui(13.0f, 500));
+    g.drawText("Scenes", getLocalBounds().removeFromLeft(74).reduced(theme::metrics::padding, 0),
                juce::Justification::centredLeft, false);
 
     if (mChips.empty())
     {
-        g.setColour(theme::colours::textFaint.withAlpha(0.7f));
-        g.setFont(juce::FontOptions(11.5f));
+        g.setColour(theme::colours::textGhost);
+        g.setFont(theme::fonts::ui(12.5f));
         g.drawText("none yet — press  +  to save the current settings as a scene",
                    getLocalBounds().withTrimmedLeft(120), juce::Justification::centredLeft, false);
     }
@@ -470,10 +488,17 @@ void SnapshotStrip::resized()
     mAddButton.setBounds(area.removeFromLeft(30).reduced(0, 2));
     area.removeFromLeft(6);
 
-    for (auto& chip : mChips)
+    // Pads share the row equally, like the design's flex:1.
+    if (!mChips.empty())
     {
-        chip->setBounds(area.removeFromLeft(chip->getIdealWidth()));
-        area.removeFromLeft(4);
+        const auto pad = juce::jmax(88, (area.getWidth() - 6 * static_cast<int>(mChips.size()))
+                                            / static_cast<int>(mChips.size()));
+
+        for (auto& chip : mChips)
+        {
+            chip->setBounds(area.removeFromLeft(juce::jmin(pad, 220)));
+            area.removeFromLeft(6);
+        }
     }
 }
 

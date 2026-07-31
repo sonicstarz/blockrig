@@ -49,6 +49,7 @@ private:
     void timerCallback() override;
     void showHome();
     void openRig(const juce::File& file);
+    void openSetlist(const juce::File& setlistFile);
     void scanThreadBody();
 
     BlockRigProcessor& mProcessor;
@@ -64,6 +65,8 @@ private:
     std::atomic<bool> mScanDone{false};
     juce::CriticalSection mProgressLock;
     juce::String mProgressText;
+    int mProgressScanned = 0;
+    int mProgressTotal = 0;
     int mBootElapsedTicks = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AppShell)

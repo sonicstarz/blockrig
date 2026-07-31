@@ -103,11 +103,20 @@ void BlockTile::paint(juce::Graphics& g)
     auto labelArea = bounds;
 
     const auto categoryColour = mMissing ? theme::colours::bad : getCategoryColour(mCategory);
-    const auto tint = mBypassed ? categoryColour.withSaturation(0.12f).withAlpha(0.5f) : categoryColour;
+    const auto tint = categoryColour;
 
-    // The block itself: a dark square carrying a coloured edge. Selection
-    // thickens and brightens that edge rather than adding another shape.
-    g.setColour(theme::colours::panelRaised);
+    // 4c chip: category fill at 10-12%, 2px category border, glow when open.
+    // A bypassed chip drops to 45% opacity wholesale rather than desaturating.
+    if (mBypassed)
+        g.beginTransparencyLayer(0.45f);
+
+    if (mEditorOpen)
+    {
+        g.setColour(categoryColour.withAlpha(0.28f));
+        g.fillRoundedRectangle(square.expanded(3.0f), theme::metrics::cornerRadius + 2.0f);
+    }
+
+    g.setColour(categoryColour.withAlpha(0.11f));
     g.fillRoundedRectangle(square, theme::metrics::cornerRadius);
 
     // Engaged wears a thick coloured outline; bypassed loses it entirely. The
@@ -122,15 +131,10 @@ void BlockTile::paint(juce::Graphics& g)
         g.setColour(theme::colours::bad.withAlpha(mSelected ? 1.0f : 0.75f));
         g.fillPath(outline);
     }
-    else if (mBypassed)
-    {
-        g.setColour(theme::colours::outlineStrong.withAlpha(mSelected ? 0.9f : 0.55f));
-        g.drawRoundedRectangle(square, theme::metrics::cornerRadius, 1.2f);
-    }
     else
     {
-        g.setColour(mSelected ? theme::colours::accent : tint);
-        g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 3.4f : 2.8f);
+        g.setColour(mSelected ? theme::colours::text.withAlpha(0.9f) : tint);
+        g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 2.5f : 2.0f);
     }
 
     if (mMissing)
@@ -166,22 +170,19 @@ void BlockTile::paint(juce::Graphics& g)
 
     if (mEditorOpen)
     {
+        g.setColour(theme::colours::accent.withAlpha(0.4f));
+        g.fillEllipse(square.getRight() - 15.0f, square.getY() + 2.0f, 12.0f, 12.0f);
         g.setColour(theme::colours::accent);
-        g.fillEllipse(square.getRight() - 12.0f, square.getY() + 5.0f, 6.0f, 6.0f);
+        g.fillEllipse(square.getRight() - 12.5f, square.getY() + 4.5f, 7.0f, 7.0f);
     }
 
     if (mBypassed)
-    {
-        // Struck through: unmistakable at a glance, unlike a dimmed tile.
-        g.setColour(theme::colours::textFaint.withAlpha(0.8f));
-        g.drawLine(square.getX() + 8.0f, square.getCentreY(), square.getRight() - 8.0f, square.getCentreY(),
-                   1.5f);
-    }
+        g.endTransparencyLayer();
 
-    g.setColour(mSelected ? theme::colours::text
-                          : (mBypassed ? theme::colours::textFaint : theme::colours::textDim));
-    g.setFont(juce::FontOptions(12.0f));
-    g.drawFittedText(mName, labelArea.reduced(1, 1), juce::Justification::centredTop, 2, 0.8f);
+    g.setColour(mSelected ? theme::colours::text : theme::colours::textDim);
+    g.setFont(theme::fonts::ui(12.0f, 500));
+    g.drawFittedText(mName + (mBypassed ? juce::String::fromUTF8("  \xc2\xb7 byp") : juce::String()),
+                     labelArea.reduced(1, 1), juce::Justification::centredTop, 2, 0.8f);
 }
 
 void BlockTile::mouseDown(const juce::MouseEvent& event)
@@ -856,14 +857,20 @@ void LaneContent::paint(juce::Graphics& g)
             path.lineTo(to);
         }
 
-        g.setColour(theme::colours::outlineStrong);
-        g.strokePath(path, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved,
+        // Amber signal wires, fading toward the border colour at the ends —
+        // the design's endcap fade, done as a horizontal gradient.
+        juce::ColourGradient wire(theme::colours::outline, from.x, from.y,
+                                  theme::colours::outline, to.x, to.y, false);
+        wire.addColour(0.2, theme::colours::accent.withAlpha(0.85f));
+        wire.addColour(0.8, theme::colours::accent.withAlpha(0.85f));
+        g.setGradientFill(wire);
+        g.strokePath(path, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
                                                 juce::PathStrokeType::rounded));
 
         // Dots where a path divides or rejoins, as in a signal diagram.
         if (connector.junction)
         {
-            g.setColour(theme::colours::textDim);
+            g.setColour(theme::colours::accent);
             g.fillEllipse(from.x - 2.5f, from.y - 2.5f, 5.0f, 5.0f);
         }
     }

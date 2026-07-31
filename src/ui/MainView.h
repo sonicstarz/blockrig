@@ -43,6 +43,10 @@ public:
     std::function<void()> onHomeRequested;
 
     static juce::File getRigsFolder();
+
+    /// Loads a setlist and returns its first existing rig, or a null file. The
+    /// home screen uses this so clicking a setlist opens night-one song-one.
+    juce::File activateSetlist(const juce::File& setlistFile);
     void confirmThenSwitch(std::function<void()> proceed);
     void loadRigFile(const juce::File& file);
 
