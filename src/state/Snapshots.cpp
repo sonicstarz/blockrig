@@ -52,6 +52,9 @@ juce::StringArray Bank::apply(BlockRigProcessor& processor, const Snapshot& snap
 {
     juce::StringArray applied;
 
+    // Duck first: the dip is already falling while the states land below.
+    processor.requestClickGuard();
+
     for (auto* block : processor.getChain().getBlocks())
     {
         const auto found = snapshot.blockStates.find(block->getUid());

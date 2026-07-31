@@ -37,6 +37,8 @@ void BlockChain::prepare(double sampleRate, int maxBlockSize)
 
     for (auto& rowBuffer : mRowBuffers)
         rowBuffer.setSize(2, mMaxBlockSize, false, true, true);
+    mTailScratch.setSize(2, mMaxBlockSize, false, true, true);
+    mTailMidi.ensureSize(64);
     mStageInput.setSize(2, mMaxBlockSize, false, true, true);
     mAccumulator.setSize(2, mMaxBlockSize, false, true, true);
 
@@ -133,6 +135,11 @@ void BlockChain::release()
             for (auto& block : row.blocks)
                 block->release();
 
+    // The device is stopping, so no tail will ever drain: reclaim them all.
+    for (auto& slot : mTailSlots)
+        slot.block.store(nullptr, std::memory_order_release);
+    mTailOwned.clear();
+
     mPrepared = false;
 }
 
@@ -220,8 +227,9 @@ void BlockChain::removeBlock(const juce::String& uid)
             if (found == row.blocks.end())
                 continue;
 
-            // Keep it alive until no snapshot can still reference it.
-            mBlocksAwaitingDeletion.push_back(std::move(*found));
+            // Keep it alive until no snapshot can still reference it - and let
+            // its tail ring out on the way.
+            retireWithTail(std::move(*found));
             row.blocks.erase(found);
 
             // An empty stage is noise in the lane; drop it, unless emptying it
@@ -339,7 +347,7 @@ bool BlockChain::mergeStage(int stageIndex)
     // Row A survives; anything below it is retired.
     for (size_t rowIndex = 1; rowIndex < stage.rows.size(); ++rowIndex)
         for (auto& block : stage.rows[rowIndex].blocks)
-            mBlocksAwaitingDeletion.push_back(std::move(block));
+            retireWithTail(std::move(block));
 
     stage.rows.resize(1);
     stage.rows.front().pan = 0.0f; // back to centre now that it is alone
@@ -405,10 +413,13 @@ float BlockChain::getRowPan(int stageIndex, int rowIndex) const
 
 void BlockChain::clear()
 {
+    // Clearing is what a rig switch does, so this is where whole-rig spillover
+    // comes from: every old block tails out while the new rig loads, which also
+    // masks the load gap.
     for (auto& stage : mLane)
         for (auto& row : stage.rows)
             for (auto& block : row.blocks)
-                mBlocksAwaitingDeletion.push_back(std::move(block));
+                retireWithTail(std::move(block));
 
     mLane.clear();
     publishSnapshot();
@@ -593,6 +604,81 @@ void BlockChain::retireSnapshot(Snapshot* snapshot) noexcept
     mRetireFifo.finishedWrite(1);
 }
 
+void BlockChain::retireWithTail(std::unique_ptr<BlockInstance> block)
+{
+    if (block == nullptr)
+        return;
+
+    const auto tailSamples = static_cast<int>(mTailCarrySeconds * mSampleRate);
+
+    // Nothing to ring out: unprepared, missing, or spillover disabled.
+    if (tailSamples <= 0 || !mPrepared || !block->hasBeenPrepared() || block->isMissing()
+        || block->getPlugin() == nullptr)
+    {
+        mBlocksAwaitingDeletion.push_back(std::move(block));
+        return;
+    }
+
+    for (auto& slot : mTailSlots)
+    {
+        if (slot.block.load(std::memory_order_acquire) != nullptr)
+            continue;
+
+        slot.totalSamples = tailSamples;
+        slot.samplesLeft.store(tailSamples, std::memory_order_relaxed);
+
+        auto* raw = block.get();
+        mTailOwned.push_back(std::move(block));
+        slot.block.store(raw, std::memory_order_release); // audio thread may begin
+        return;
+    }
+
+    // All slots busy - a storm of removals. The oldest tails matter least, but
+    // stealing one mid-render races the audio thread; dropping the new tail is
+    // the safe loss.
+    mBlocksAwaitingDeletion.push_back(std::move(block));
+}
+
+void BlockChain::renderTails(juce::AudioBuffer<float>& buffer, int numSamples) noexcept
+{
+    const int numChannels = juce::jmin(2, buffer.getNumChannels());
+
+    if (numChannels <= 0 || mTailScratch.getNumSamples() < numSamples)
+        return;
+
+    for (auto& slot : mTailSlots)
+    {
+        auto* block = slot.block.load(std::memory_order_acquire);
+        if (block == nullptr)
+            continue;
+
+        const auto remaining = slot.samplesLeft.load(std::memory_order_relaxed);
+
+        // Silence in, tail out.
+        mTailScratch.clear(0, numSamples);
+        mTailMidi.clear();
+
+        juce::AudioBuffer<float> view(mTailScratch.getArrayOfWritePointers(),
+                                      mTailScratch.getNumChannels(), numSamples);
+        block->process(view, mTailMidi, static_cast<double>(numSamples) / mSampleRate);
+
+        // Linear fade across the window, so the end of the tail window is a
+        // finished decay rather than a cut.
+        const auto gain = juce::jlimit(0.0f, 1.0f,
+                                       static_cast<float>(remaining)
+                                           / static_cast<float>(juce::jmax(1, slot.totalSamples)));
+
+        for (int channel = 0; channel < numChannels; ++channel)
+            buffer.addFrom(channel, 0, view, juce::jmin(channel, view.getNumChannels() - 1), 0,
+                           numSamples, gain);
+
+        if (remaining - numSamples <= 0)
+            slot.block.store(nullptr, std::memory_order_release); // done; owner may free
+        else
+            slot.samplesLeft.store(remaining - numSamples, std::memory_order_relaxed);
+    }
+}
+
 void BlockChain::collectGarbage()
 {
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
@@ -612,6 +698,23 @@ void BlockChain::collectGarbage()
     // also safe.)
     if (!mBlocksAwaitingDeletion.empty() && mPendingSnapshot.load(std::memory_order_acquire) == nullptr)
         mBlocksAwaitingDeletion.clear(); // ~BlockInstance releases the plug-in
+
+    // Free only what the audio thread has finished with. "Pending snapshot not
+    // yet adopted" is NOT evidence that audio stopped - collectGarbage runs
+    // right after every publish, before the audio thread has had a callback -
+    // so the only safe drain point for a stopped device is release().
+    if (!mTailOwned.empty())
+    {
+        mTailOwned.erase(std::remove_if(mTailOwned.begin(), mTailOwned.end(),
+                                        [this](const std::unique_ptr<BlockInstance>& owned) {
+                                            for (auto& slot : mTailSlots)
+                                                if (slot.block.load(std::memory_order_acquire)
+                                                    == owned.get())
+                                                    return false;
+                                            return true; // no slot references it: free
+                                        }),
+                         mTailOwned.end());
+    }
 }
 
 void BlockChain::processStage(RenderStage& stage, juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi,
@@ -758,6 +861,9 @@ void BlockChain::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mid
 
     for (auto& stage : mActiveSnapshot->stages)
         processStage(stage, buffer, midi, bufferDuration);
+
+    // Removed blocks ring out on top of the live rig.
+    renderTails(buffer, numSamples);
 
     const auto elapsed = juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - start);
 

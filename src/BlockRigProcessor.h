@@ -155,6 +155,13 @@ public:
 
     void startTestTone(TestToneSide side = TestToneSide::both);
 
+    /// Briefly dips the output around a snapshot apply. setState can click -
+    /// some plug-ins reset buffers - and a 35 ms equal-power dip is far less
+    /// audible than the click it hides. A true crossfade would need the old and
+    /// new settings rendering simultaneously in one plug-in instance, which is
+    /// not a thing.
+    void requestClickGuard();
+
     /// Tuner mode: the input keeps feeding the pitch detector while the rig's
     /// output is silenced, so tuning is quiet without touching the user's mute.
     void setTunerActive(bool shouldBeActive) { mTunerActive.store(shouldBeActive, std::memory_order_relaxed); }
@@ -235,6 +242,9 @@ private:
     juce::SharedResourcePointer<BlockFavorites> mFavorites;
     juce::SharedResourcePointer<BlockClipboard> mClipboard;
     std::atomic<bool> mTunerActive{false};
+
+    std::atomic<int> mClickGuardSamplesLeft{-1};
+    int mClickGuardTotal = 0;
 
     std::atomic<int> mTestToneSamplesLeft{0};
     std::atomic<int> mTestToneSide{static_cast<int>(TestToneSide::both)};

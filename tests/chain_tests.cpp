@@ -663,6 +663,82 @@ void testNamBlock(const juce::File& modelsDir)
 }
 } // namespace
 
+
+//==============================================================================
+/// Spillover: a removed delay must ring out instead of cutting dead, and must
+/// be genuinely gone once the tail window ends.
+void testTailCarry()
+{
+    std::printf("\nTail carry (spillover)\n");
+
+    const auto* delay = findDescription("AUDelay");
+
+    if (delay == nullptr)
+    {
+        check(false, "found AUDelay for the tail test");
+        return;
+    }
+
+    blockrig::BlockChain chain;
+    chain.setTailCarrySeconds(0.5); // short window keeps the test fast
+    chain.prepare(kSampleRate, kBlockSize);
+    chain.insertBlock(makeBlock(*delay), blockrig::BlockPosition{0, 0, 0});
+
+    // AUDelay defaults to a one-second delay time, which would put the first
+    // echo outside the whole tail window: shorten it so the tail exists.
+    if (auto* plugin = chain.getBlockByIndex(0)->getPlugin())
+        for (auto* parameter : plugin->getParameters())
+            if (parameter->getName(32).containsIgnoreCase("delay time"))
+                parameter->setValueNotifyingHost(0.05f); // ~0.1 s of a 0..2 s range
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    // Feed signal so the delay line has content, then remove the block.
+    for (int block = 0; block < 40; ++block)
+    {
+        fillSine(buffer, block * kBlockSize);
+        midi.clear();
+        chain.process(buffer, midi);
+    }
+
+    const auto uid = chain.getBlockByIndex(0)->getUid();
+    chain.removeBlock(uid);
+    check(chain.getNumBlocks() == 0, "block removed from the lane");
+
+    // Silence in; the echo lands ~0.1 s after removal, well inside the window.
+    float tailEnergy = 0.0f;
+
+    for (int block = 0; block < 80; ++block)
+    {
+        buffer.clear();
+        midi.clear();
+        chain.process(buffer, midi);
+        tailEnergy = juce::jmax(tailEnergy, buffer.getMagnitude(0, kBlockSize));
+    }
+
+    std::printf("       tail level just after removal: %.5f\n", tailEnergy);
+    check(tailEnergy > 0.001f, "removed delay keeps ringing (spillover)");
+
+    // Run past the window; the tail must be gone and the block freed.
+    const int windowBlocks = static_cast<int>(0.5 * kSampleRate / kBlockSize) + 4;
+
+    for (int block = 0; block < windowBlocks; ++block)
+    {
+        buffer.clear();
+        midi.clear();
+        chain.process(buffer, midi);
+    }
+
+    buffer.clear();
+    midi.clear();
+    chain.process(buffer, midi);
+    check(buffer.getMagnitude(0, kBlockSize) < 1.0e-4f, "tail is silent after the window");
+
+    chain.collectGarbage();
+    check(render(chain, 4), "chain still renders after the tail block is freed");
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
@@ -682,6 +758,7 @@ int main(int argc, char** argv)
     }
 
     testOrderingAndLatency();
+    testTailCarry();
     testBypass();
     testCpuAttribution();
     testEditsWhileRendering();

@@ -151,6 +151,10 @@ public:
     void prepareLane(bool force);
 
     void collectGarbage();
+
+    /// Seconds a removed block keeps rendering, silence-fed, so its delay or
+    /// reverb tail rings out instead of cutting dead. 0 disables.
+    void setTailCarrySeconds(double seconds) { mTailCarrySeconds = seconds; }
     bool refreshLatency();
 
     int getNumStages() const { return static_cast<int>(mLane.size()); }
@@ -222,6 +226,36 @@ private:
     int mMaxBlockSize = 512;
     bool mPrepared = false;
     bool mSourceIsMono = false;
+    double mTailCarrySeconds = 4.0;
+
+    /// Spillover: a removed block moves into a tail slot instead of dying, and
+    /// the audio thread keeps calling it with silence for a few seconds so its
+    /// delay or reverb rings out. The slot's pointer is the handoff: message
+    /// thread publishes, audio thread clears when the tail window ends, and
+    /// only then does the message thread free the block.
+    ///
+    /// Each retired block is rendered alone, silence-fed - a delay that used to
+    /// feed an amp tails out dry rather than through the amp that was also
+    /// removed. Rendering the retired graph with its topology intact would fix
+    /// that, but shared instances between old and new snapshots would then be
+    /// processed twice, which corrupts their state. Dry tails are the honest
+    /// compromise.
+    struct TailSlot
+    {
+        std::atomic<BlockInstance*> block{nullptr};
+        std::atomic<int> samplesLeft{0};
+        int totalSamples = 0;
+    };
+
+    static constexpr int kTailSlots = 12;
+    TailSlot mTailSlots[kTailSlots];
+    /// Ownership of tailing blocks; freed once their slot has been cleared.
+    std::vector<std::unique_ptr<BlockInstance>> mTailOwned;
+    juce::AudioBuffer<float> mTailScratch;
+    juce::MidiBuffer mTailMidi;
+
+    void retireWithTail(std::unique_ptr<BlockInstance> block);
+    void renderTails(juce::AudioBuffer<float>& buffer, int numSamples) noexcept;
 
     BlockLoad mTotalLoad;
     std::atomic<int> mDropouts{0};

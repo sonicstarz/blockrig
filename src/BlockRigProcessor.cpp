@@ -142,6 +142,13 @@ void BlockRigProcessor::setMuted(bool shouldBeMuted)
     mMuteGain.setTargetValue(shouldBeMuted ? 0.0f : 1.0f);
 }
 
+void BlockRigProcessor::requestClickGuard()
+{
+    const auto sampleRate = getSampleRate() > 0.0 ? getSampleRate() : kFallbackSampleRate;
+    mClickGuardTotal = static_cast<int>(sampleRate * 0.035);
+    mClickGuardSamplesLeft.store(mClickGuardTotal, std::memory_order_release);
+}
+
 void BlockRigProcessor::startTestTone(TestToneSide side)
 {
     const auto sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
@@ -287,6 +294,27 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         }
 
         mTestToneSamplesLeft.store(remaining - toPlay, std::memory_order_relaxed);
+    }
+
+    // The click guard: a half-cosine dip over ~35 ms. Applied before the
+    // metronome so the count-in never ducks.
+    if (auto remaining = mClickGuardSamplesLeft.load(std::memory_order_acquire); remaining > 0)
+    {
+        const auto total = juce::jmax(1, mClickGuardTotal);
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto progress = 1.0f
+                                  - static_cast<float>(juce::jmax(0, remaining - i))
+                                        / static_cast<float>(total);
+            // 0 at the edges of the window's centre, 1 at its ends.
+            const auto gain = 0.5f - 0.5f * std::cos(progress * juce::MathConstants<float>::twoPi);
+
+            for (int channel = 0; channel < juce::jmin(numOutputs, buffer.getNumChannels()); ++channel)
+                buffer.getWritePointer(channel)[i] *= 1.0f - gain;
+        }
+
+        mClickGuardSamplesLeft.store(remaining - numSamples, std::memory_order_release);
     }
 
     // After the mute, deliberately: counting a band in over a silent rig is a
