@@ -7,6 +7,7 @@
 #include "BlockRigProcessor.h"
 #include "host/BlockInstance.h"
 #include "host/PluginCatalog.h"
+#include "blocks/nam/DownloadsWatcher.h"
 #include "host/PluginScannerWorker.h"
 #include "state/RigFiles.h"
 #include "ui/AppShell.h"
@@ -117,6 +118,10 @@ public:
         // Crash insurance only now: rigs are explicit files the user saves. This
         // keeps at most half a minute of unsaved work recoverable from disk.
         mAutoSave = std::make_unique<AutoSave>(*mProcessor, getSessionFile());
+
+        // Captures downloaded in any browser flow into the library by themselves.
+        mDownloadsWatcher = std::make_unique<DownloadsWatcher>(
+            getStorageDirectory().getChildFile("DownloadsWatcher.state"));
     }
 
     void shutdown() override
@@ -129,6 +134,7 @@ public:
         }
 
         mAutoSave = nullptr;
+        mDownloadsWatcher = nullptr;
 
         if (mScanThread.joinable())
             mScanThread.join();
@@ -944,6 +950,7 @@ private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
     };
 
+    std::unique_ptr<DownloadsWatcher> mDownloadsWatcher;
     std::unique_ptr<PluginScannerWorker> mScannerWorker;
     std::unique_ptr<PluginCatalog> mCatalogForScan;
     std::thread mScanThread;

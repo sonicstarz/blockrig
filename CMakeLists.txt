@@ -92,6 +92,8 @@ set(BLOCKRIG_SOURCES
     src/host/PluginScannerWorker.cpp
     src/host/InternalBlockFormat.cpp
     src/blocks/nam/CaptureLibrary.cpp
+    src/blocks/nam/DownloadsWatcher.cpp
+    src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
     src/dsp/AmpSlot.cpp
     src/dsp/ToneStack.cpp
@@ -105,6 +107,7 @@ set(BLOCKRIG_SOURCES
     src/ui/TransportBar.cpp
     src/ui/AppShell.cpp
     src/ui/SnapshotStrip.cpp
+    src/ui/Tone3000Panel.cpp
     src/ui/TunerPanel.cpp
     src/ui/LaneView.cpp
     src/ui/BlockPicker.cpp
@@ -146,6 +149,7 @@ target_compile_definitions(BlockRigApp PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1)
 
 target_link_libraries(BlockRigApp PRIVATE
+    juce::juce_cryptography
     $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
     juce::juce_audio_utils
     juce::juce_audio_processors
@@ -181,6 +185,7 @@ target_link_libraries(BlockRigPlugin PUBLIC
     $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>)
 
 target_link_libraries(BlockRigPlugin PRIVATE
+    juce::juce_cryptography
     juce::juce_audio_utils
     juce::juce_audio_processors
     juce::juce_audio_devices
@@ -223,6 +228,8 @@ if(BLOCKRIG_BUILD_TESTS)
     src/host/Transport.cpp
         src/host/InternalBlockFormat.cpp
         src/blocks/nam/CaptureLibrary.cpp
+    src/blocks/nam/DownloadsWatcher.cpp
+    src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
@@ -241,6 +248,7 @@ if(BLOCKRIG_BUILD_TESTS)
         JUCE_MODAL_LOOPS_PERMITTED=1)
 
     target_link_libraries(chain_tests PRIVATE
+        juce::juce_cryptography
         $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
         juce::juce_audio_utils
         juce::juce_audio_processors
@@ -258,6 +266,8 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
         src/blocks/nam/CaptureLibrary.cpp
+    src/blocks/nam/DownloadsWatcher.cpp
+    src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
@@ -276,6 +286,7 @@ if(BLOCKRIG_BUILD_TESTS)
         JUCE_MODAL_LOOPS_PERMITTED=1)
 
     target_link_libraries(scan_tests PRIVATE
+        juce::juce_cryptography
         $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
         juce::juce_audio_utils
         juce::juce_audio_processors
@@ -299,6 +310,8 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
         src/blocks/nam/CaptureLibrary.cpp
+    src/blocks/nam/DownloadsWatcher.cpp
+    src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
@@ -317,6 +330,7 @@ if(BLOCKRIG_BUILD_TESTS)
         JUCE_MODAL_LOOPS_PERMITTED=1)
 
     target_link_libraries(rig_tests PRIVATE
+        juce::juce_cryptography
         $<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>
         juce::juce_audio_utils
         juce::juce_audio_processors

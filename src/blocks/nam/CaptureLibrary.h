@@ -39,11 +39,12 @@ public:
     /// Copies a capture in. Content-deduplicated: re-loading the same file is a
     /// no-op, and a different capture under an already-used name gets a suffix
     /// rather than silently replacing what was there.
-    void addCapture(const juce::File& source);
+    void addCapture(const juce::File& source, const juce::String& subfolder = {});
 
     /// For captures that only exist as embedded rig state (the original file is
     /// gone) — the state carries the full JSON, which is the capture.
-    void addCaptureJson(const juce::String& json, const juce::String& name);
+    void addCaptureJson(const juce::String& json, const juce::String& name,
+                        const juce::String& subfolder = {});
 
     juce::File getDirectory() const { return mDirectory; }
 
@@ -52,7 +53,8 @@ public:
 
 private:
     bool containsContent(const juce::String& hash) const;
-    juce::File targetFileFor(const juce::String& name, const juce::String& hash) const;
+    juce::File targetFileFor(const juce::String& name, const juce::String& hash,
+                             const juce::String& subfolder) const;
     void noteAdded();
 
     juce::File mDirectory;

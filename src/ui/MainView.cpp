@@ -1,5 +1,6 @@
 #include "ui/MainView.h"
 
+#include "ui/Tone3000Panel.h"
 #include "ui/TunerPanel.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -1563,6 +1564,10 @@ void MainView::showSettings()
     menu.addItem(13, "Split A / B...", splitStage >= 0);
     menu.addSeparator();
 
+    menu.addSectionHeader("Captures");
+    menu.addItem(14, "Browse TONE3000...");
+    menu.addSeparator();
+
     menu.addItem(1, "Rescan plug-ins...");
     menu.addItem(3, "Close all windows", !mWindows.empty());
     menu.addSeparator();
@@ -1591,6 +1596,13 @@ void MainView::showSettings()
                 if (splitStage >= 0)
                     openUtilityWindow("Split A / B", BlockCategory::utility,
                                       std::make_unique<SplitPanel>(mProcessor, splitStage));
+                break;
+            case 14:
+                openUtilityWindow("TONE3000", BlockCategory::amp, std::make_unique<Tone3000Panel>());
+                if (!mWindows.empty())
+                    mWindows.back()->setSize(Tone3000Panel::kPreferredWidth,
+                                             Tone3000Panel::kPreferredHeight
+                                                 + BlockWindow::kTitleBarHeight);
                 break;
             case 4:
                 mProcessor.getCatalog().clearDenylist();

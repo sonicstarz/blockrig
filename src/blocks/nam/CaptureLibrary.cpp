@@ -85,13 +85,22 @@ bool CaptureLibrary::containsContent(const juce::String& hash) const
     return false;
 }
 
-juce::File CaptureLibrary::targetFileFor(const juce::String& name, const juce::String& hash) const
+juce::File CaptureLibrary::targetFileFor(const juce::String& name, const juce::String& hash,
+                                         const juce::String& subfolder) const
 {
     const auto safeName = juce::File::createLegalFileName(name.isNotEmpty() ? name : "Capture");
-    return mDirectory.getChildFile(safeName + "." + hash.substring(0, 8) + ".nam");
+
+    auto directory = mDirectory;
+    if (subfolder.isNotEmpty())
+    {
+        directory = directory.getChildFile(juce::File::createLegalFileName(subfolder));
+        directory.createDirectory();
+    }
+
+    return directory.getChildFile(safeName + "." + hash.substring(0, 8) + ".nam");
 }
 
-void CaptureLibrary::addCapture(const juce::File& source)
+void CaptureLibrary::addCapture(const juce::File& source, const juce::String& subfolder)
 {
     if (!source.existsAsFile())
         return;
@@ -109,11 +118,12 @@ void CaptureLibrary::addCapture(const juce::File& source)
     if (containsContent(hash))
         return;
 
-    if (source.copyFileTo(targetFileFor(source.getFileNameWithoutExtension(), hash)))
+    if (source.copyFileTo(targetFileFor(source.getFileNameWithoutExtension(), hash, subfolder)))
         noteAdded();
 }
 
-void CaptureLibrary::addCaptureJson(const juce::String& json, const juce::String& name)
+void CaptureLibrary::addCaptureJson(const juce::String& json, const juce::String& name,
+                                    const juce::String& subfolder)
 {
     if (json.isEmpty())
         return;
@@ -122,7 +132,7 @@ void CaptureLibrary::addCaptureJson(const juce::String& json, const juce::String
     if (containsContent(hash))
         return;
 
-    if (targetFileFor(name, hash).replaceWithText(json))
+    if (targetFileFor(name, hash, subfolder).replaceWithText(json))
         noteAdded();
 }
 
