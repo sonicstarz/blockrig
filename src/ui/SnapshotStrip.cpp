@@ -96,17 +96,23 @@ private:
 class SnapshotStrip::AddPanel final : public juce::Component
 {
 public:
-    AddPanel(BlockRigProcessor& processor, std::function<void()> onSaved)
+    /// `editIndex` >= 0 edits an existing snapshot's name and safes instead of
+    /// creating one, so a scene can be re-scoped without rebuilding it.
+    AddPanel(BlockRigProcessor& processor, std::function<void()> onSaved, int editIndex = -1)
         : mProcessor(processor)
         , mOnSaved(std::move(onSaved))
+        , mEditIndex(editIndex)
     {
         mNameLabel.setText("NAME", juce::dontSendNotification);
         mNameLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
         mNameLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
         addAndMakeVisible(mNameLabel);
 
-        mName.setText("Snapshot " + juce::String(static_cast<int>(
-                          mProcessor.getSnapshots().getSnapshots().size() + 1)));
+        const auto& existing = mProcessor.getSnapshots().getSnapshots();
+        const bool editing = mEditIndex >= 0 && mEditIndex < static_cast<int>(existing.size());
+
+        mName.setText(editing ? existing[static_cast<size_t>(mEditIndex)].name
+                              : "Snapshot " + juce::String(static_cast<int>(existing.size() + 1)));
         mName.setSelectAllWhenFocused(true);
         addAndMakeVisible(mName);
 
@@ -115,20 +121,29 @@ public:
         mSafesLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
         addAndMakeVisible(mSafesLabel);
 
-        // Everything defaults on. Unticking is the advanced move.
+        // Everything defaults on for a new snapshot; editing shows what this one
+        // actually holds.
         for (auto* block : mProcessor.getChain().getBlocks())
         {
+            const bool ticked =
+                !editing
+                || existing[static_cast<size_t>(mEditIndex)].blockStates.count(block->getUid()) > 0;
+
             auto toggle = std::make_unique<juce::ToggleButton>(block->getDisplayName());
-            toggle->setToggleState(true, juce::dontSendNotification);
+            toggle->setToggleState(ticked, juce::dontSendNotification);
             toggle->getProperties().set("uid", block->getUid());
             mHolder.addAndMakeVisible(*toggle);
             mBlockToggles.push_back(std::move(toggle));
         }
 
-        mTempoToggle.setToggleState(true, juce::dontSendNotification);
+        mTempoToggle.setToggleState(!editing || existing[static_cast<size_t>(mEditIndex)].includeTempo,
+                                    juce::dontSendNotification);
         mHolder.addAndMakeVisible(mTempoToggle);
-        mTunerToggle.setToggleState(true, juce::dontSendNotification);
+        mTunerToggle.setToggleState(!editing || existing[static_cast<size_t>(mEditIndex)].includeTuner,
+                                    juce::dontSendNotification);
         mHolder.addAndMakeVisible(mTunerToggle);
+
+        mSave.setButtonText(editing ? "Update snapshot" : "Save snapshot");
 
         mViewport.setViewedComponent(&mHolder, false);
         mViewport.setScrollBarsShown(true, false);
@@ -184,9 +199,20 @@ private:
             name = "Snapshot";
 
         auto& bank = mProcessor.getSnapshots();
-        bank.getSnapshots().push_back(snapshots::Bank::capture(
-            mProcessor, name, uids, mTempoToggle.getToggleState(), mTunerToggle.getToggleState()));
-        bank.activeIndex = static_cast<int>(bank.getSnapshots().size()) - 1;
+        auto captured = snapshots::Bank::capture(mProcessor, name, uids,
+                                                 mTempoToggle.getToggleState(),
+                                                 mTunerToggle.getToggleState());
+
+        if (mEditIndex >= 0 && mEditIndex < static_cast<int>(bank.getSnapshots().size()))
+        {
+            bank.getSnapshots()[static_cast<size_t>(mEditIndex)] = std::move(captured);
+            bank.activeIndex = mEditIndex;
+        }
+        else
+        {
+            bank.getSnapshots().push_back(std::move(captured));
+            bank.activeIndex = static_cast<int>(bank.getSnapshots().size()) - 1;
+        }
 
         if (mOnSaved)
             mOnSaved();
@@ -208,6 +234,7 @@ private:
     juce::ToggleButton mTempoToggle{"Tempo & time signature"};
     juce::ToggleButton mTunerToggle{"Tuner"};
     juce::TextButton mSave{"Save snapshot"};
+    int mEditIndex = -1;
 };
 
 //==============================================================================
@@ -334,6 +361,7 @@ void SnapshotStrip::showChipMenu(int index)
 {
     juce::PopupMenu menu;
     menu.addItem(1, "Rename...");
+    menu.addItem(3, "Edit what's saved...");
     menu.addItem(2, "Delete");
 
     menu.showMenuAsync(juce::PopupMenu::Options(), [this, index](int choice) {
@@ -364,6 +392,22 @@ void SnapshotStrip::showChipMenu(int index)
                     refresh();
                 }
             }));
+        }
+        else if (choice == 3)
+        {
+            if (openPanel)
+            {
+                auto panel = std::make_unique<AddPanel>(mProcessor,
+                                                        [this] {
+                                                            if (onBankChanged)
+                                                                onBankChanged();
+                                                            refresh();
+                                                        },
+                                                        index);
+                const auto width = panel->getWidth();
+                const auto height = panel->getHeight();
+                openPanel(std::move(panel), "Edit snapshot", width, height);
+            }
         }
         else if (choice == 2)
         {

@@ -10,7 +10,9 @@
 #include "host/Transport.h"
 #include "dsp/PitchDetector.h"
 #include "midi/MidiEngine.h"
+#include "state/BlockFavorites.h"
 #include "state/Snapshots.h"
+#include "state/UndoHistory.h"
 
 namespace blockrig
 {
@@ -64,6 +66,12 @@ public:
                   std::function<void(juce::String uid, juce::String error)> onFinished = {});
 
     void removeBlock(const juce::String& uid);
+
+    /// Adds a block and pushes a saved state chunk into it once it exists.
+    /// Paste and favourites both need this; addBlock alone would drop the
+    /// settings that are the entire point.
+    void addBlockWithState(const juce::PluginDescription& description, BlockPosition position,
+                           const juce::MemoryBlock& state, bool bypassed = false);
     void moveBlock(const juce::String& uid, BlockPosition position);
 
     /// Splits a stage into two parallel rows (side A above, side B below) or
@@ -155,6 +163,9 @@ public:
 
     snapshots::Bank& getSnapshots() { return mSnapshotBank; }
     MidiEngine& getMidiEngine() { return mMidiEngine; }
+    UndoHistory& getUndoHistory() { return mUndoHistory; }
+    BlockFavorites& getFavorites() { return *mFavorites; }
+    BlockClipboard& getClipboard() { return *mClipboard; }
     bool isTestTonePlaying() const { return mTestToneSamplesLeft.load(std::memory_order_relaxed) > 0; }
 
     /// How many times processBlock has run. Distinguishes "the audio callback
@@ -219,6 +230,10 @@ private:
     PitchDetector mPitchDetector;
     snapshots::Bank mSnapshotBank;
     MidiEngine mMidiEngine{*this};
+    UndoHistory mUndoHistory{*this};
+    /// Shared app-wide, so a favourite saved in one rig is there in the next.
+    juce::SharedResourcePointer<BlockFavorites> mFavorites;
+    juce::SharedResourcePointer<BlockClipboard> mClipboard;
     std::atomic<bool> mTunerActive{false};
 
     std::atomic<int> mTestToneSamplesLeft{0};

@@ -586,6 +586,41 @@ void LaneView::selectBlock(const juce::String& uid)
 
 void LaneView::addBlockAt(BlockPosition position, juce::Component& near)
 {
+    // Favourites first: a saved block is a plug-in you already chose once, so
+    // reaching it should be shorter than finding it again in a list of 850.
+    const auto favorites = mProcessor.getFavorites().getEntries();
+
+    if (!favorites.isEmpty())
+    {
+        juce::PopupMenu menu;
+        menu.addItem(1, "Browse all blocks...");
+        menu.addSectionHeader("Favourites");
+
+        int id = 100;
+        for (const auto& entry : favorites)
+            menu.addItem(id++, entry.name + "   (" + entry.description.name + ")");
+
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&near),
+                           [this, position, favorites, &near](int choice) {
+            if (choice == 1)
+            {
+                showPickerAt(position, near);
+            }
+            else if (choice >= 100 && choice - 100 < favorites.size())
+            {
+                const auto& entry = favorites[choice - 100];
+                mProcessor.addBlockWithState(entry.description, position,
+                                             mProcessor.getFavorites().loadState(entry.file));
+            }
+        });
+        return;
+    }
+
+    showPickerAt(position, near);
+}
+
+void LaneView::showPickerAt(BlockPosition position, juce::Component& near)
+{
     BlockPicker::show(mProcessor.getCatalog(), near,
                       [this, position](const juce::PluginDescription& description) {
                           mProcessor.addBlock(description, position,
@@ -651,6 +686,31 @@ void LaneView::showStageMenu(int stageIndex, juce::Component& near)
                        });
 }
 
+void LaneView::saveFavorite(const juce::String& uid)
+{
+    auto* block = mProcessor.getChain().getBlockByUid(uid);
+    if (block == nullptr)
+        return;
+
+    auto window = std::make_shared<juce::AlertWindow>("Save as favourite", "",
+                                                      juce::MessageBoxIconType::NoIcon, this);
+    window->addTextEditor("name", block->getDisplayName());
+    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    window->enterModalState(true, juce::ModalCallbackFunction::create([this, uid, window](int result) {
+        if (result != 1)
+            return;
+
+        const auto name = window->getTextEditorContents("name").trim();
+        if (name.isEmpty())
+            return;
+
+        if (auto* target = mProcessor.getChain().getBlockByUid(uid))
+            mProcessor.getFavorites().save(*target, name);
+    }));
+}
+
 void LaneView::showBlockMenu(const juce::String& uid)
 {
     auto* block = mProcessor.getChain().getBlockByUid(uid);
@@ -663,6 +723,10 @@ void LaneView::showBlockMenu(const juce::String& uid)
     menu.addSeparator();
     menu.addItem(3, "Add block before");
     menu.addItem(4, "Add block after");
+    menu.addSeparator();
+    menu.addItem(8, "Copy", !block->isMissing());
+    menu.addItem(9, "Paste after", mProcessor.getClipboard().hasContent());
+    menu.addItem(10, "Save as favourite...", !block->isMissing());
     menu.addSeparator();
     menu.addItem(5, "Remove");
     menu.addSeparator();
@@ -689,6 +753,26 @@ void LaneView::showBlockMenu(const juce::String& uid)
 
         switch (choice)
         {
+            case 8:
+                if (target != nullptr)
+                    mProcessor.getClipboard().copy(*target);
+                break;
+            case 9:
+            {
+                auto& clipboard = mProcessor.getClipboard();
+                if (clipboard.hasContent())
+                {
+                    mProcessor.addBlockWithState(
+                        clipboard.getDescription(),
+                        BlockPosition{position.stage, position.row, position.index + 1},
+                        clipboard.getState(), clipboard.wasBypassed());
+                }
+                break;
+            }
+            case 10:
+                if (target != nullptr)
+                    saveFavorite(uid);
+                break;
             case 1:
                 if (target != nullptr)
                     target->setBypassed(!target->isBypassed());

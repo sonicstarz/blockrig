@@ -362,6 +362,36 @@ void BlockRigProcessor::addBlock(const juce::PluginDescription& description, Blo
         });
 }
 
+void BlockRigProcessor::addBlockWithState(const juce::PluginDescription& description,
+                                          BlockPosition position, const juce::MemoryBlock& state,
+                                          bool bypassed)
+{
+    // Copy the chunk: creation is asynchronous and the caller's buffer may be a
+    // clipboard that changes before the plug-in arrives.
+    auto chunk = std::make_shared<juce::MemoryBlock>(state);
+
+    addBlock(description, position, [this, chunk, bypassed](juce::String uid, juce::String) {
+        if (uid.isEmpty())
+            return;
+
+        auto* block = mChain.getBlockByUid(uid);
+        if (block == nullptr)
+            return;
+
+        block->setBypassed(bypassed);
+
+        if (auto* plugin = block->getPlugin(); plugin != nullptr && !chunk->isEmpty())
+        {
+            plugin->setStateInformation(chunk->getData(), static_cast<int>(chunk->getSize()));
+            // A restored chunk can rearrange the plug-in's buses.
+            mChain.prepareLane(false);
+        }
+
+        if (onChainChanged)
+            onChainChanged();
+    });
+}
+
 void BlockRigProcessor::notifyBlockRemoval(const juce::String& uid)
 {
     if (onBlockAboutToBeRemoved)

@@ -177,6 +177,8 @@ private:
     void timerCallback() override;
     void addBlockAt(BlockPosition position, juce::Component& near);
     void showBlockMenu(const juce::String& uid);
+    void saveFavorite(const juce::String& uid);
+    void showPickerAt(BlockPosition position, juce::Component& near);
     void showStageMenu(int stageIndex, juce::Component& near);
     void selectBlock(const juce::String& uid);
 

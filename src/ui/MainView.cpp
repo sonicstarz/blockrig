@@ -749,6 +749,14 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     // A footswitch can change rigs and snapshots; the UI follows the engine.
     mProcessor.getMidiEngine().onRigStepRequested = [this](int direction) { stepRig(direction); };
 
+    mProcessor.getUndoHistory().onApplied = [this] {
+        mLane.refresh();
+        mSnapshots.refresh();
+        updatePanel();
+        resized();
+        refreshHeader();
+    };
+
     addAndMakeVisible(mLane);
 
     mMuteBanner.onClick = [this] {
@@ -818,6 +826,11 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     };
 
     mProcessor.onChainChanged = [this] {
+        // Every structural edit ends here, which makes this the one place an
+        // undo point has to be recorded. Recording the state AFTER the edit is
+        // what makes the ring a history of states rather than of intentions.
+        mProcessor.getUndoHistory().capture("Chain edit");
+
         mLane.refresh();
         updatePanel();
         // A split needs a second row, so the lane's minimum height changes.
@@ -838,6 +851,7 @@ MainView::~MainView()
     mProcessor.onChainChanged = nullptr;
     mProcessor.onBlockAboutToBeRemoved = nullptr;
     mProcessor.getMidiEngine().onRigStepRequested = nullptr;
+    mProcessor.getUndoHistory().onApplied = nullptr;
     // Windows own hosted editors, so they must go before the chain does.
     closeAllWindows();
     setLookAndFeel(nullptr);
@@ -847,6 +861,21 @@ bool MainView::keyPressed(const juce::KeyPress& key, juce::Component*)
 {
     // Escape closes the frontmost plug-in editor; window sprawl is the standard
     // complaint about hosts, so this is worth having.
+    // Undo/redo, with the platform's shapes: cmd-Z and shift-cmd-Z.
+    if (key == juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0))
+    {
+        mProcessor.getUndoHistory().undo();
+        return true;
+    }
+
+    if (key == juce::KeyPress('z', juce::ModifierKeys::commandModifier
+                                       | juce::ModifierKeys::shiftModifier, 0)
+        || key == juce::KeyPress('y', juce::ModifierKeys::commandModifier, 0))
+    {
+        mProcessor.getUndoHistory().redo();
+        return true;
+    }
+
     if (key == juce::KeyPress::escapeKey)
     {
         closeActiveWindow();
@@ -1170,6 +1199,12 @@ void MainView::timerCallback()
         const bool wasDirty = mDirty;
         mDirty = rigstate::toValueTree(mProcessor).toXmlString() != mSavedStateXml;
 
+        // Parameter moves have no single moment to hook, so the same slow tick
+        // that notices dirtiness records an undo point for them.
+        if (mDirty && !mProcessor.getUndoHistory().isApplying())
+            mProcessor.getUndoHistory().capture("Settings change");
+
+
         if (mDirty != wasDirty)
             refreshHeader();
     }
@@ -1349,6 +1384,12 @@ void MainView::loadRigFile(const juce::File& file)
 
     rigfiles::load(mProcessor, file, [this, file](rigstate::RestoreResult result, juce::String error) {
         mCurrentRigFile = file;
+
+        // The loaded rig is the baseline. Undo works back to it and stops;
+        // undoing past a load would mean undoing the load itself.
+        mProcessor.getUndoHistory().clear();
+        mProcessor.getUndoHistory().capture("Loaded rig");
+
         markSavedState();
         rigWasRestored();
         reportRestore(result, error);
@@ -1629,6 +1670,12 @@ void MainView::showSettings()
     menu.addItem(14, "Browse TONE3000...");
     menu.addSeparator();
 
+    menu.addSectionHeader("Edit");
+    auto& undo = mProcessor.getUndoHistory();
+    menu.addItem(16, "Undo " + undo.getUndoDescription() + "   (Cmd Z)", undo.canUndo());
+    menu.addItem(17, "Redo " + undo.getRedoDescription() + "   (Shift Cmd Z)", undo.canRedo());
+    menu.addSeparator();
+
     menu.addSectionHeader("Control");
     menu.addItem(15, "MIDI mappings...");
     menu.addSeparator();
@@ -1669,6 +1716,8 @@ void MainView::showSettings()
                                              Tone3000Panel::kPreferredHeight
                                                  + BlockWindow::kTitleBarHeight);
                 break;
+            case 16: mProcessor.getUndoHistory().undo(); break;
+            case 17: mProcessor.getUndoHistory().redo(); break;
             case 15:
                 openUtilityWindow("MIDI", BlockCategory::utility,
                                   std::make_unique<MidiPanel>(mProcessor));

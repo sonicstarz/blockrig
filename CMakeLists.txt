@@ -83,7 +83,9 @@ set(BLOCKRIG_SOURCES
     src/BlockRigProcessor.cpp
     src/midi/MidiEngine.cpp
     src/state/RigState.cpp
+    src/state/BlockFavorites.cpp
     src/state/Snapshots.cpp
+    src/state/UndoHistory.cpp
     src/state/RigFiles.cpp
     src/state/PluginState.cpp
     src/host/BlockChain.cpp
@@ -314,7 +316,9 @@ if(BLOCKRIG_BUILD_TESTS)
         src/BlockRigProcessor.cpp
         src/midi/MidiEngine.cpp
         src/state/RigState.cpp
+    src/state/BlockFavorites.cpp
     src/state/Snapshots.cpp
+    src/state/UndoHistory.cpp
     src/state/RigFiles.cpp
         src/host/BlockChain.cpp
         src/host/BlockInstance.cpp
