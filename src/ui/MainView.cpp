@@ -1,5 +1,6 @@
 #include "ui/MainView.h"
 
+#include "ui/BuiltInBlockPanel.h"
 #include "ui/MidiPanel.h"
 #include "ui/Tone3000Panel.h"
 #include "ui/TunerPanel.h"
@@ -923,8 +924,33 @@ void MainView::openBlockWindow(const juce::String& uid)
         return;
 
     auto* plugin = block->getPlugin();
+
+    // A missing block explains itself and offers the way back rather than
+    // opening an empty window.
     if (plugin == nullptr)
+    {
+        if (!block->isMissing())
+            return;
+
+        const auto name = block->getMissingDescription().name;
+
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::WarningIcon)
+                .withTitle(name + " is not installed")
+                .withMessage("This block is holding its place in the rig, with the settings it was "
+                             "saved with. Install the plug-in and rescan, and it comes back "
+                             "intact.\n\nRemoving the block is the only thing that loses those "
+                             "settings.")
+                .withButton("Rescan plug-ins")
+                .withButton("Close")
+                .withAssociatedComponent(this),
+            [this](int result) {
+                if (result == 1)
+                    startScan();
+            });
         return;
+    }
 
     juce::PluginDescription description;
     plugin->fillInPluginDescription(description);
@@ -940,6 +966,24 @@ void MainView::openBlockWindow(const juce::String& uid)
         content = std::make_unique<NamBlockPanel>(*nam);
         width = 700;
         height = 200 + BlockWindow::kTitleBarHeight;
+    }
+    else if (auto* ir = dynamic_cast<IrBlockProcessor*>(plugin))
+    {
+        content = std::make_unique<IrBlockPanel>(*ir);
+        width = IrBlockPanel::kPreferredWidth;
+        height = IrBlockPanel::kPreferredHeight + BlockWindow::kTitleBarHeight;
+    }
+    else if (auto* utility = dynamic_cast<UtilityBlockProcessor*>(plugin))
+    {
+        content = std::make_unique<UtilityBlockPanel>(*utility);
+        width = UtilityBlockPanel::kPreferredWidth;
+        height = UtilityBlockPanel::kPreferredHeight + BlockWindow::kTitleBarHeight;
+    }
+    else if (auto* eq = dynamic_cast<EqBlockProcessor*>(plugin))
+    {
+        content = std::make_unique<EqBlockPanel>(*eq, eq->getValueTreeState());
+        width = EqBlockPanel::kPreferredWidth;
+        height = EqBlockPanel::kPreferredHeight + BlockWindow::kTitleBarHeight;
     }
     else if (plugin->hasEditor())
     {

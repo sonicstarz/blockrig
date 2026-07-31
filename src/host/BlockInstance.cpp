@@ -23,10 +23,17 @@ BlockInstance::~BlockInstance()
 
 void BlockInstance::prepare(double sampleRate, int maxBlockSize, bool sourceIsMono)
 {
-    if (mPlugin == nullptr)
-        return;
-
     mSourceIsMono = sourceIsMono;
+
+    if (mPlugin == nullptr)
+    {
+        // A placeholder is transparent: it neither widens nor narrows, so
+        // mono-ness passes through it to whatever comes next.
+        mHasPrepared = true;
+        mProducesStereo = false;
+        return;
+    }
+
     mHasPrepared = true;
 
     // Negotiate a stereo layout properly rather than just asking for two
@@ -122,7 +129,10 @@ void BlockInstance::release()
 
 juce::String BlockInstance::getDisplayName() const
 {
-    return mPlugin != nullptr ? mPlugin->getName() : juce::String("(empty)");
+    if (mPlugin != nullptr)
+        return mPlugin->getName();
+
+    return mMissingDescription.name.isNotEmpty() ? mMissingDescription.name : juce::String("(empty)");
 }
 
 void BlockInstance::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi,

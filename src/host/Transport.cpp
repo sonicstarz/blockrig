@@ -68,6 +68,55 @@ void Transport::followHost(const PositionInfo& hostPosition) noexcept
         mTimeInSamples.store(*samples, std::memory_order_relaxed);
 }
 
+void Transport::renderMetronome(juce::AudioBuffer<float>& buffer, int numSamples) noexcept
+{
+    if (!mMetronomeOn.load(std::memory_order_relaxed))
+    {
+        mClickEnvelope = 0.0;
+        mLastBeat = -1;
+        return;
+    }
+
+    const auto level = mMetronomeLevel.load(std::memory_order_relaxed);
+    const auto bpm = mBpm.load(std::memory_order_relaxed);
+    const auto numerator = mNumerator.load(std::memory_order_relaxed);
+    const auto beatsPerSample = bpm / (60.0 * mSampleRate);
+    auto ppq = mPpqPosition.load(std::memory_order_relaxed);
+
+    const auto channels = juce::jmin(2, buffer.getNumChannels());
+    const auto decay = std::exp(-1.0 / (0.012 * mSampleRate)); // ~12 ms click
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        // A beat boundary crossed since the last sample starts a new click; the
+        // downbeat gets a higher pitch so the bar is audible.
+        const auto beat = static_cast<int>(std::floor(ppq));
+
+        if (beat != mLastBeat)
+        {
+            mLastBeat = beat;
+            mClickEnvelope = 1.0;
+            mClickPhase = 0.0;
+            const auto beatInBar = ((beat % numerator) + numerator) % numerator;
+            mClickFrequency = beatInBar == 0 ? 1600.0 : 900.0;
+        }
+
+        if (mClickEnvelope > 1.0e-4)
+        {
+            const auto sample =
+                static_cast<float>(std::sin(mClickPhase) * mClickEnvelope * level);
+
+            for (int channel = 0; channel < channels; ++channel)
+                buffer.setSample(channel, i, buffer.getSample(channel, i) + sample);
+
+            mClickPhase += 2.0 * juce::MathConstants<double>::pi * mClickFrequency / mSampleRate;
+            mClickEnvelope *= decay;
+        }
+
+        ppq += beatsPerSample;
+    }
+}
+
 void Transport::setBpm(double bpm)
 {
     mBpm.store(juce::jlimit(kMinBpm, kMaxBpm, bpm), std::memory_order_relaxed);

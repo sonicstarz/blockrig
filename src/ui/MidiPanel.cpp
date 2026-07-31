@@ -18,6 +18,7 @@ constexpr GlobalTarget kGlobalTargets[] = {
     {"mute", "Mute", true},
     {"tuner", "Tuner", true},
     {"tap", "Tap tempo", true},
+    {"metronome", "Metronome", true},
     {"snapshotNext", "Next snapshot", true},
     {"snapshotPrev", "Previous snapshot", true},
     {"rigNext", "Next rig", true},

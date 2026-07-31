@@ -192,7 +192,14 @@ void MidiEngine::applyGlobal(const Mapping& mapping, int value, bool pressed)
     if (!pressed)
         return; // actions fire on press only
 
-    if (id == "tap")
+    if (id == "metronome")
+    {
+        juce::MessageManager::callAsync([this] {
+            auto& transport = mProcessor.getTransport();
+            transport.setMetronomeEnabled(!transport.isMetronomeEnabled());
+        });
+    }
+    else if (id == "tap")
     {
         juce::MessageManager::callAsync([this] { mProcessor.getTransport().tap(); });
     }

@@ -1,13 +1,20 @@
 #include "host/InternalBlockFormat.h"
 
+#include "blocks/eq/EqBlockProcessor.h"
+#include "blocks/ir/IrBlockProcessor.h"
 #include "blocks/nam/NamBlockProcessor.h"
+#include "blocks/utility/UtilityBlockProcessor.h"
 
 namespace blockrig
 {
 
 InternalBlockFormat::InternalBlockFormat()
 {
+    // Signal-chain order, which is the order the picker shows them in.
     mDescriptions.push_back(NamBlockProcessor::getBlockDescription());
+    mDescriptions.push_back(IrBlockProcessor::getBlockDescription());
+    mDescriptions.push_back(EqBlockProcessor::getBlockDescription());
+    mDescriptions.push_back(UtilityBlockProcessor::getBlockDescription());
 }
 
 void InternalBlockFormat::findAllTypesForFile(juce::OwnedArray<juce::PluginDescription>& results,
@@ -22,6 +29,12 @@ std::unique_ptr<juce::AudioPluginInstance> InternalBlockFormat::createInstance(c
 {
     if (identifier == NamBlockProcessor::kIdentifier)
         return std::make_unique<NamBlockProcessor>();
+    if (identifier == IrBlockProcessor::kIdentifier)
+        return std::make_unique<IrBlockProcessor>();
+    if (identifier == EqBlockProcessor::kIdentifier)
+        return std::make_unique<EqBlockProcessor>();
+    if (identifier == UtilityBlockProcessor::kIdentifier)
+        return std::make_unique<UtilityBlockProcessor>();
 
     return nullptr;
 }

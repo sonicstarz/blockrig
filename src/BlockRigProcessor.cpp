@@ -289,6 +289,10 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         mTestToneSamplesLeft.store(remaining - toPlay, std::memory_order_relaxed);
     }
 
+    // After the mute, deliberately: counting a band in over a silent rig is a
+    // thing people do.
+    mTransport.renderMetronome(buffer, numSamples);
+
     mWidthAtOutput.store(measureWidth(buffer, numSamples), std::memory_order_relaxed);
     mOutputLevel.store(buffer.getMagnitude(0, numSamples), std::memory_order_relaxed);
 

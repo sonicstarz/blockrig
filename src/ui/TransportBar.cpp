@@ -46,6 +46,16 @@ TransportBar::TransportBar(BlockRigProcessor& processor)
     };
     addAndMakeVisible(mTapButton);
 
+    mMetronome.setTooltip("Metronome. The click is added after the rig's mute, so you can count in "
+                          "over a silent rig.");
+    mMetronome.setClickingTogglesState(true);
+    mMetronome.setToggleState(mProcessor.getTransport().isMetronomeEnabled(),
+                              juce::dontSendNotification);
+    mMetronome.onClick = [this] {
+        mProcessor.getTransport().setMetronomeEnabled(mMetronome.getToggleState());
+    };
+    addAndMakeVisible(mMetronome);
+
     mTimeSignature.addItemList(kSignatures, 1);
     mTimeSignature.setTooltip("Time signature reported to plug-ins.");
     mTimeSignature.onChange = [this] {
@@ -137,9 +147,11 @@ void TransportBar::resized()
 {
     auto area = getLocalBounds().reduced(7, 3);
 
-    mTimeSignature.setBounds(area.removeFromRight(62).withSizeKeepingCentre(62, 24));
-    area.removeFromRight(6);
-    mTapButton.setBounds(area.removeFromRight(42).withSizeKeepingCentre(42, 24));
+    mTimeSignature.setBounds(area.removeFromRight(58).withSizeKeepingCentre(58, 24));
+    area.removeFromRight(4);
+    mMetronome.setBounds(area.removeFromRight(28).withSizeKeepingCentre(28, 24));
+    area.removeFromRight(4);
+    mTapButton.setBounds(area.removeFromRight(40).withSizeKeepingCentre(40, 24));
     area.removeFromRight(8);
 
     mBpmLabel.setBounds(area.removeFromTop(11));

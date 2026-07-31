@@ -87,13 +87,22 @@ void BlockTile::setCategory(BlockCategory category)
     repaint();
 }
 
+void BlockTile::setMissing(bool isMissing)
+{
+    if (mMissing == isMissing)
+        return;
+
+    mMissing = isMissing;
+    repaint();
+}
+
 void BlockTile::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds();
     auto square = bounds.removeFromTop(theme::metrics::blockSquare).toFloat().reduced(2.0f);
     auto labelArea = bounds;
 
-    const auto categoryColour = getCategoryColour(mCategory);
+    const auto categoryColour = mMissing ? theme::colours::bad : getCategoryColour(mCategory);
     const auto tint = mBypassed ? categoryColour.withSaturation(0.12f).withAlpha(0.5f) : categoryColour;
 
     // The block itself: a dark square carrying a coloured edge. Selection
@@ -104,7 +113,16 @@ void BlockTile::paint(juce::Graphics& g)
     // Engaged wears a thick coloured outline; bypassed loses it entirely. The
     // outline IS the on-light - engaged versus bypassed has to read from across
     // the room, not from a strikethrough you lean in for.
-    if (mBypassed)
+    if (mMissing)
+    {
+        juce::Path outline;
+        outline.addRoundedRectangle(square, theme::metrics::cornerRadius);
+        const float dashes[] = {5.0f, 4.0f};
+        juce::PathStrokeType(2.0f).createDashedStroke(outline, outline, dashes, 2);
+        g.setColour(theme::colours::bad.withAlpha(mSelected ? 1.0f : 0.75f));
+        g.fillPath(outline);
+    }
+    else if (mBypassed)
     {
         g.setColour(theme::colours::outlineStrong.withAlpha(mSelected ? 0.9f : 0.55f));
         g.drawRoundedRectangle(square, theme::metrics::cornerRadius, 1.2f);
@@ -115,10 +133,24 @@ void BlockTile::paint(juce::Graphics& g)
         g.drawRoundedRectangle(square, theme::metrics::cornerRadius, mSelected ? 3.4f : 2.8f);
     }
 
-    // Line-art glyph for the category: a rig should be readable by shape before
-    // any of the names are read.
-    drawCategoryIcon(g, square.reduced(15.0f).withTrimmedBottom(6.0f), mCategory,
-                     mBypassed ? theme::colours::textFaint : tint, 1.7f);
+    if (mMissing)
+    {
+        // An exclamation mark, not a category glyph: this slot holds a place,
+        // it does not do anything.
+        auto glyph = square.reduced(15.0f).withTrimmedBottom(6.0f);
+        g.setColour(theme::colours::bad);
+        const auto centreX = glyph.getCentreX();
+        g.fillRoundedRectangle(centreX - 1.6f, glyph.getY() + 2.0f, 3.2f,
+                               glyph.getHeight() * 0.55f, 1.6f);
+        g.fillEllipse(centreX - 2.0f, glyph.getBottom() - 5.0f, 4.0f, 4.0f);
+    }
+    else
+    {
+        // Line-art glyph for the category: a rig should be readable by shape
+        // before any of the names are read.
+        drawCategoryIcon(g, square.reduced(15.0f).withTrimmedBottom(6.0f), mCategory,
+                         mBypassed ? theme::colours::textFaint : tint, 1.7f);
+    }
 
     // Level along the bottom edge of the square.
     theme::drawLevelMeter(g, square.reduced(9.0f, 0.0f).removeFromBottom(4.0f).translated(0.0f, -5.0f),
@@ -376,6 +408,15 @@ void LaneView::refresh()
                 tile->setEditorOpen(isBlockWindowOpen != nullptr && isBlockWindowOpen(uid));
                 tile->setSelected(uid == mSelectedUid);
                 tile->setRowLabel(rows > 1 ? (rowIndex == 0 ? "A" : "B") : juce::String());
+
+                tile->setMissing(block->isMissing());
+
+                if (plugin == nullptr && block->isMissing())
+                {
+                    tile->setTooltip(block->getMissingDescription().name
+                                     + " is not installed. The block keeps its place and its settings; "
+                                       "reinstall the plug-in and rescan to bring it back.");
+                }
 
                 if (plugin != nullptr)
                 {

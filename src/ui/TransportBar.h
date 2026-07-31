@@ -68,6 +68,9 @@ private:
     juce::Label mBpmLabel;
     BpmValue mBpmValue;
     juce::TextButton mTapButton{"TAP"};
+    /// Click on/off. A level control would need a popover for something people
+    /// set once; the level lives in the transport and defaults sensibly.
+    juce::TextButton mMetronome{"♩"};
     juce::ComboBox mTimeSignature;
 
     bool mWasFollowingHost = false;

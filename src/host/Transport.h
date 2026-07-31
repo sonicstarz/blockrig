@@ -2,6 +2,7 @@
 
 #include <atomic>
 
+#include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace blockrig
@@ -43,6 +44,22 @@ public:
     bool isFollowingHost() const noexcept { return mFollowingHost.load(std::memory_order_relaxed); }
     void setFollowingHost(bool shouldFollow) { mFollowingHost.store(shouldFollow, std::memory_order_relaxed); }
 
+    /// Metronome: on/off and level. Lives here rather than in a block because
+    /// the click must not be processed by the rig - it is a reference, not
+    /// signal, and running it through an amp would be absurd.
+    void setMetronomeEnabled(bool shouldBeEnabled)
+    {
+        mMetronomeOn.store(shouldBeEnabled, std::memory_order_relaxed);
+    }
+    bool isMetronomeEnabled() const { return mMetronomeOn.load(std::memory_order_relaxed); }
+
+    void setMetronomeLevel(float level) { mMetronomeLevel.store(level, std::memory_order_relaxed); }
+    float getMetronomeLevel() const { return mMetronomeLevel.load(std::memory_order_relaxed); }
+
+    /// Audio thread: adds the click to a buffer that is already at final level.
+    /// Returns immediately when the metronome is off.
+    void renderMetronome(juce::AudioBuffer<float>& buffer, int numSamples) noexcept;
+
     /// Registers a tap and, once there are enough, sets the tempo from them.
     /// Returns the number of taps counted so far.
     int tap();
@@ -53,6 +70,14 @@ private:
     std::atomic<int> mNumerator{4};
     std::atomic<int> mDenominator{4};
     std::atomic<bool> mFollowingHost{false};
+    std::atomic<bool> mMetronomeOn{false};
+    std::atomic<float> mMetronomeLevel{0.35f};
+
+    /// Click voice state, audio thread only.
+    double mClickPhase = 0.0;
+    double mClickEnvelope = 0.0;
+    double mClickFrequency = 1000.0;
+    int mLastBeat = -1;
 
     std::atomic<double> mPpqPosition{0.0};
     std::atomic<juce::int64> mTimeInSamples{0};

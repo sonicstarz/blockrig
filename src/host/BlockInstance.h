@@ -79,6 +79,21 @@ public:
     void process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, double bufferDurationSeconds) noexcept;
 
     juce::AudioPluginInstance* getPlugin() const noexcept { return mPlugin.get(); }
+
+    /// A block whose plug-in could not be created: it holds the slot, remembers
+    /// what belongs there and the state it was saved with, and passes audio
+    /// through. Deleting a plug-in from disk should cost you that block's sound,
+    /// not its place in the rig and not the settings you spent an evening on.
+    bool isMissing() const noexcept { return mPlugin == nullptr; }
+
+    void setMissingDescription(juce::PluginDescription description, juce::MemoryBlock state)
+    {
+        mMissingDescription = std::move(description);
+        mMissingState = std::move(state);
+    }
+
+    const juce::PluginDescription& getMissingDescription() const noexcept { return mMissingDescription; }
+    const juce::MemoryBlock& getMissingState() const noexcept { return mMissingState; }
     const juce::String& getUid() const noexcept { return mUid; }
 
     juce::String getDisplayName() const;
@@ -140,6 +155,9 @@ private:
     bool mMonoOnly = false;
     bool mSourceIsMono = false;
     bool mHasPrepared = false;
+
+    juce::PluginDescription mMissingDescription;
+    juce::MemoryBlock mMissingState;
     bool mProducesStereo = false;
     int mNegotiatedIns = 0;
     int mNegotiatedOuts = 0;

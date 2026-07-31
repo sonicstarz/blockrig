@@ -36,6 +36,8 @@ public:
     /// "A" or "B" on a split stage; empty when the stage has a single path.
     void setRowLabel(juce::String label);
     void setCategory(BlockCategory category);
+    /// Draws as a warning slot rather than a working block.
+    void setMissing(bool isMissing);
 
     bool isBypassed() const { return mBypassed; }
 
@@ -52,6 +54,7 @@ private:
     bool mSelected = false;
     bool mBypassed = false;
     bool mEditorOpen = false;
+    bool mMissing = false;
     float mActivity = 0.0f;
     float mLoad = 0.0f;
     bool mDragging = false;

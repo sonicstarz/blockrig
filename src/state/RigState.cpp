@@ -27,11 +27,27 @@ juce::ValueTree describeBlock(BlockInstance& block)
     juce::ValueTree tree(ids::block);
 
     auto* plugin = block.getPlugin();
-    if (plugin == nullptr)
-        return tree;
 
+    // A placeholder for a missing plug-in saves as what it stands for, state
+    // and all, so reinstalling the plug-in restores the block intact rather
+    // than the rig having quietly forgotten it.
     juce::PluginDescription description;
-    plugin->fillInPluginDescription(description);
+    juce::MemoryBlock chunk;
+
+    if (plugin != nullptr)
+    {
+        plugin->fillInPluginDescription(description);
+        plugin->getStateInformation(chunk); // opaque; never construct by hand
+    }
+    else if (block.isMissing() && block.getMissingDescription().name.isNotEmpty())
+    {
+        description = block.getMissingDescription();
+        chunk = block.getMissingState();
+    }
+    else
+    {
+        return tree;
+    }
 
     tree.setProperty(ids::blockUid, block.getUid(), nullptr);
     tree.setProperty(ids::format, description.pluginFormatName, nullptr);
@@ -43,10 +59,6 @@ juce::ValueTree describeBlock(BlockInstance& block)
     tree.setProperty(ids::manufacturer, description.manufacturerName, nullptr);
     tree.setProperty(ids::version, description.version, nullptr);
     tree.setProperty(ids::bypassed, block.isBypassed(), nullptr);
-
-    // Opaque, straight from the plug-in. Never construct this by hand.
-    juce::MemoryBlock chunk;
-    plugin->getStateInformation(chunk);
 
     if (!chunk.isEmpty())
     {
@@ -134,10 +146,17 @@ private:
 
         if (uid.isEmpty())
         {
-            // A missing plug-in must not sink the rig: note it and carry on, so
-            // the user can reinstall and reload.
+            // A missing plug-in must not sink the rig, and must not quietly
+            // vanish either: a placeholder holds the slot, remembers what
+            // belongs there and the state it was saved with, and passes audio
+            // through until the plug-in comes back.
             mResult.missingPlugins.add(saved.description.name
                                        + (error.isNotEmpty() ? " (" + error + ")" : juce::String()));
+
+            auto placeholder = std::make_unique<BlockInstance>(nullptr, juce::Uuid().toString());
+            placeholder->setMissingDescription(saved.description, saved.state);
+            placeholder->setBypassed(saved.bypassed);
+            mProcessor.getChain().insertBlock(std::move(placeholder), saved.position);
         }
         else
         {

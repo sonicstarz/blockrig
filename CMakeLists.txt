@@ -92,6 +92,10 @@ set(BLOCKRIG_SOURCES
     src/host/PluginCatalog.cpp
     src/host/PluginScannerWorker.cpp
     src/host/InternalBlockFormat.cpp
+    src/blocks/eq/EqBlockProcessor.cpp
+    src/blocks/ir/IrBlockProcessor.cpp
+    src/blocks/ir/IrLibrary.cpp
+    src/blocks/utility/UtilityBlockProcessor.cpp
     src/blocks/nam/CaptureLibrary.cpp
     src/blocks/nam/DownloadsWatcher.cpp
     src/midi/MidiEngine.cpp
@@ -109,6 +113,7 @@ set(BLOCKRIG_SOURCES
     src/ui/TransportBar.cpp
     src/ui/AppShell.cpp
     src/ui/SnapshotStrip.cpp
+    src/ui/BuiltInBlockPanel.cpp
     src/ui/MidiPanel.cpp
     src/ui/Tone3000Panel.cpp
     src/ui/TunerPanel.cpp
@@ -230,7 +235,11 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/BlockInstance.cpp
     src/host/Transport.cpp
         src/host/InternalBlockFormat.cpp
-        src/blocks/nam/CaptureLibrary.cpp
+        src/blocks/eq/EqBlockProcessor.cpp
+    src/blocks/ir/IrBlockProcessor.cpp
+    src/blocks/ir/IrLibrary.cpp
+    src/blocks/utility/UtilityBlockProcessor.cpp
+    src/blocks/nam/CaptureLibrary.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
@@ -266,7 +275,11 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginCatalog.cpp
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
-        src/blocks/nam/CaptureLibrary.cpp
+        src/blocks/eq/EqBlockProcessor.cpp
+    src/blocks/ir/IrBlockProcessor.cpp
+    src/blocks/ir/IrLibrary.cpp
+    src/blocks/utility/UtilityBlockProcessor.cpp
+    src/blocks/nam/CaptureLibrary.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
@@ -309,7 +322,11 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginCatalog.cpp
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
-        src/blocks/nam/CaptureLibrary.cpp
+        src/blocks/eq/EqBlockProcessor.cpp
+    src/blocks/ir/IrBlockProcessor.cpp
+    src/blocks/ir/IrLibrary.cpp
+    src/blocks/utility/UtilityBlockProcessor.cpp
+    src/blocks/nam/CaptureLibrary.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp

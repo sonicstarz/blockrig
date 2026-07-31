@@ -595,6 +595,17 @@ private:
             }
         }
 
+        // Built-in blocks that CAN create width are driven here, so the width
+        // probe proves the mechanism rather than only the neutral case.
+        for (auto* block : mProcessor->getChain().getBlocks())
+            if (auto* plugin = block->getPlugin(); plugin != nullptr && plugin->getName() == "Utility")
+                for (auto* parameter : plugin->getParameters())
+                    if (parameter->getName(16) == "Pan")
+                    {
+                        parameter->setValueNotifyingHost(0.0f); // hard left
+                        std::printf("Set Utility / Pan hard left\n");
+                    }
+
         // Answers "does a mono feed leave a stereo plug-in stuck in mono" with a
         // measurement rather than an opinion: drive the plug-in into an explicitly
         // stereo mode and see whether the output decorrelates.
