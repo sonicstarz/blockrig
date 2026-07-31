@@ -69,8 +69,13 @@ public:
         g.setColour(armed ? theme::colours::warn
                           : (mapping.cc >= 0 ? theme::colours::accent : theme::colours::textFaint));
         g.setFont(juce::FontOptions(12.0f, juce::Font::bold));
-        g.drawText(armed ? "move it..." : (mapping.cc >= 0 ? "CC " + juce::String(mapping.cc) : "unmapped"),
-                   area.removeFromRight(86.0f), juce::Justification::centred, false);
+        auto trigger = armed ? juce::String("move it...")
+                             : (mapping.cc >= 0 ? "CC " + juce::String(mapping.cc) : "unmapped");
+
+        if (!armed && mapping.cc >= 0 && mapping.channel > 0)
+            trigger += " ch" + juce::String(mapping.channel);
+
+        g.drawText(trigger, area.removeFromRight(86.0f), juce::Justification::centred, false);
     }
 
     void listBoxItemClicked(int row, const juce::MouseEvent& event) override
@@ -102,12 +107,111 @@ MidiPanel::MidiPanel(BlockRigProcessor& processor)
     mList.setColour(juce::ListBox::backgroundColourId, juce::Colours::transparentBlack);
     addAndMakeVisible(mList);
 
+    mOptionsButton.setTooltip("Clock sync and what program changes select.");
+    mOptionsButton.onClick = [this] { showOptionsMenu(-1); };
+    addAndMakeVisible(mOptionsButton);
+
+    mActivity.setFont(juce::FontOptions(11.0f));
+    mActivity.setColour(juce::Label::textColourId, theme::colours::textFaint);
+    mActivity.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(mActivity);
+
     mProcessor.getMidiEngine().onMappingsChanged = [this] { refresh(); };
     refresh();
+    startTimerHz(10);
+}
+
+void MidiPanel::timerCallback()
+{
+    auto& engine = mProcessor.getMidiEngine();
+    const auto activity = engine.getLastActivity();
+    const auto age = juce::Time::currentTimeMillis() - activity.timeMs;
+
+    juce::String text;
+
+    if (activity.cc >= 0 && age < 4000)
+        text = "CC " + juce::String(activity.cc) + " = " + juce::String(activity.value) + "  (ch "
+               + juce::String(activity.channel) + ")";
+    else
+        text = "no MIDI yet";
+
+    if (engine.isReceivingClock())
+        text += "   ·   clock in";
+
+    mActivity.setText(text, juce::dontSendNotification);
+    mList.repaint(); // armed rows animate their prompt
+}
+
+void MidiPanel::showOptionsMenu(int row)
+{
+    auto& engine = mProcessor.getMidiEngine();
+    juce::PopupMenu menu;
+
+    if (row < 0)
+    {
+        menu.addSectionHeader("Program change selects");
+        menu.addItem(1, "Snapshots", true,
+                     engine.getProgramTarget() == MidiEngine::ProgramTarget::snapshots);
+        menu.addItem(2, "Rigs", true, engine.getProgramTarget() == MidiEngine::ProgramTarget::rigs);
+        menu.addSeparator();
+        menu.addItem(3, "Follow MIDI clock", true, engine.getFollowMidiClock());
+
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mOptionsButton),
+                           [this, &engine](int choice) {
+            if (choice == 1)
+                engine.setProgramTarget(MidiEngine::ProgramTarget::snapshots);
+            else if (choice == 2)
+                engine.setProgramTarget(MidiEngine::ProgramTarget::rigs);
+            else if (choice == 3)
+                engine.setFollowMidiClock(!engine.getFollowMidiClock());
+        });
+        return;
+    }
+
+    // Per-mapping: which channel, and how far the pedal's travel reaches.
+    const auto mappings = engine.getMappings();
+    if (row >= static_cast<int>(mappings.size()))
+        return;
+
+    const auto& mapping = mappings[static_cast<size_t>(row)];
+
+    menu.addSectionHeader("Channel");
+    menu.addItem(200, "Any", true, mapping.channel == 0);
+    for (int channel = 1; channel <= 16; ++channel)
+        menu.addItem(200 + channel, juce::String(channel), true, mapping.channel == channel);
+
+    if (mapping.globalId.isEmpty())
+    {
+        menu.addSectionHeader("Pedal range");
+        menu.addItem(300, "Full (0 - 100%)", true, mapping.minimum == 0.0f && mapping.maximum == 1.0f);
+        menu.addItem(301, "Lower half (0 - 50%)", true, mapping.maximum == 0.5f);
+        menu.addItem(302, "Upper half (50 - 100%)", true, mapping.minimum == 0.5f);
+        menu.addItem(303, "Inverted (100 - 0%)", true, mapping.minimum > mapping.maximum);
+    }
+
+    menu.showMenuAsync(juce::PopupMenu::Options(), [this, row](int choice) {
+        auto& innerEngine = mProcessor.getMidiEngine();
+        auto mappings = innerEngine.getMappings();
+
+        if (row >= static_cast<int>(mappings.size()) || choice == 0)
+            return;
+
+        auto& target = mappings[static_cast<size_t>(row)];
+
+        if (choice >= 200 && choice <= 216)
+            target.channel = choice - 200;
+        else if (choice == 300) { target.minimum = 0.0f; target.maximum = 1.0f; }
+        else if (choice == 301) { target.minimum = 0.0f; target.maximum = 0.5f; }
+        else if (choice == 302) { target.minimum = 0.5f; target.maximum = 1.0f; }
+        else if (choice == 303) { target.minimum = 1.0f; target.maximum = 0.0f; }
+
+        innerEngine.setMappings(std::move(mappings));
+    });
 }
 
 MidiPanel::~MidiPanel()
 {
+    stopTimer();
     mProcessor.getMidiEngine().onMappingsChanged = nullptr;
 }
 
@@ -203,6 +307,7 @@ void MidiPanel::rowClicked(int row, bool isPopup)
 
     juce::PopupMenu menu;
     menu.addItem(1, "Learn (move a controller)");
+    menu.addItem(3, "Channel and range...");
     menu.addItem(2, "Remove");
 
     menu.showMenuAsync(juce::PopupMenu::Options(), [this, row](int choice) {
@@ -214,6 +319,10 @@ void MidiPanel::rowClicked(int row, bool isPopup)
         else if (choice == 2)
         {
             mProcessor.getMidiEngine().removeMapping(row);
+        }
+        else if (choice == 3)
+        {
+            showOptionsMenu(row);
         }
     });
 }
@@ -229,9 +338,12 @@ void MidiPanel::resized()
 
     auto top = area.removeFromTop(30);
     mAddButton.setBounds(top.removeFromLeft(130));
+    top.removeFromLeft(6);
+    mOptionsButton.setBounds(top.removeFromLeft(84));
     top.removeFromLeft(theme::metrics::gap);
     mHint.setBounds(top);
 
+    mActivity.setBounds(area.removeFromBottom(18));
     area.removeFromTop(6);
     mList.setBounds(area);
 }

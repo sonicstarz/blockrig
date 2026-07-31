@@ -14,6 +14,7 @@ namespace blockrig
 /// wiggle the controller → mapped. Rows show live state, so an armed row
 /// visibly waits and a learned row shows its CC number.
 class MidiPanel final : public juce::Component
+                      , private juce::Timer
 {
 public:
     explicit MidiPanel(BlockRigProcessor& processor);
@@ -34,7 +35,13 @@ private:
 
     BlockRigProcessor& mProcessor;
 
+    void timerCallback() override;
+    void showOptionsMenu(int row);
+
     juce::TextButton mAddButton{"Add mapping..."};
+    juce::TextButton mOptionsButton{"Options"};
+    /// Last CC seen, so "is my pedal even reaching this app" answers itself.
+    juce::Label mActivity;
     juce::Label mHint;
     juce::ListBox mList;
     std::unique_ptr<Model> mModel;

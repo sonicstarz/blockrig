@@ -11,6 +11,8 @@
 #include "ui/TransportBar.h"
 #include "state/RigFiles.h"
 #include "ui/LaneView.h"
+#include "state/Setlist.h"
+#include "ui/GigView.h"
 #include "ui/SnapshotStrip.h"
 #include "ui/BlockWindow.h"
 #include "ui/Theme.h"
@@ -59,6 +61,9 @@ private:
     /// Rig files management. The rigs folder is user-visible in Documents so
     /// rigs can be backed up, shared, and renamed like any other files.
     juce::Array<juce::File> listRigs() const;
+    void showSetlistMenu();
+    void enterGigView();
+    void exitGigView();
     void stepRig(int direction);
     void newRig();
     bool isDirty() const { return mDirty; }
@@ -85,6 +90,13 @@ private:
     /// lives in the header rather than behind a menu.
     juce::TextButton mTunerButton{"Tuner"};
     juce::TextButton mSaveButton{"Save"};
+    juce::TextButton mGigButton{"Gig"};
+
+    /// When a setlist is loaded it, not the folder, decides rig order.
+    Setlist mSetlist;
+    bool mHasSetlist = false;
+
+    std::unique_ptr<GigView> mGigView;
     juce::TextButton mPrevRig{"<"}, mNextRig{">"};
 
     /// Centre of the header: the rig's name, asterisked while there are unsaved

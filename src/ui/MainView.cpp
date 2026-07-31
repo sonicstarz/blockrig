@@ -1,6 +1,7 @@
 #include "ui/MainView.h"
 
 #include "ui/BuiltInBlockPanel.h"
+#include "ui/GigView.h"
 #include "ui/MidiPanel.h"
 #include "ui/Tone3000Panel.h"
 #include "ui/TunerPanel.h"
@@ -735,6 +736,10 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mSaveButton.onClick = [this] { saveRig(false); };
     addAndMakeVisible(mSaveButton);
 
+    mGigButton.setTooltip("Performance view: big buttons, nothing editable.");
+    mGigButton.onClick = [this] { enterGigView(); };
+    addAndMakeVisible(mGigButton);
+
     // Snapshots sit right under the header: scenes are a performance control.
     mSnapshots.openPanel = [this](std::unique_ptr<juce::Component> panel, juce::String title,
                                   int width, int height) {
@@ -748,6 +753,13 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
 
     // A footswitch can change rigs and snapshots; the UI follows the engine.
     mProcessor.getMidiEngine().onRigStepRequested = [this](int direction) { stepRig(direction); };
+
+    mProcessor.getMidiEngine().onRigProgramRequested = [this](int program) {
+        const auto rigs = listRigs();
+
+        if (juce::isPositiveAndBelow(program, rigs.size()) && rigs[program] != mCurrentRigFile)
+            confirmThenSwitch([this, file = rigs[program]] { loadRigFile(file); });
+    };
 
     mProcessor.getUndoHistory().onApplied = [this] {
         mLane.refresh();
@@ -851,6 +863,7 @@ MainView::~MainView()
     mProcessor.onChainChanged = nullptr;
     mProcessor.onBlockAboutToBeRemoved = nullptr;
     mProcessor.getMidiEngine().onRigStepRequested = nullptr;
+    mProcessor.getMidiEngine().onRigProgramRequested = nullptr;
     mProcessor.getUndoHistory().onApplied = nullptr;
     // Windows own hosted editors, so they must go before the chain does.
     closeAllWindows();
@@ -1318,10 +1331,119 @@ juce::File MainView::getRigsFolder()
 
 juce::Array<juce::File> MainView::listRigs() const
 {
+    // With a setlist loaded, its order IS the rig order - that is what the
+    // arrows and a footswitch step through. Missing entries are skipped rather
+    // than becoming dead stops mid-set.
+    if (mHasSetlist)
+    {
+        juce::Array<juce::File> ordered;
+
+        for (int i = 0; i < mSetlist.rigNames.size(); ++i)
+            if (const auto file = mSetlist.getRigFile(i); file.existsAsFile())
+                ordered.add(file);
+
+        if (!ordered.isEmpty())
+            return ordered;
+    }
+
     auto rigs = getRigsFolder().findChildFiles(juce::File::findFiles, false,
                                                "*" + juce::String(rigfiles::kFileExtension));
     rigs.sort();
     return rigs;
+}
+
+void MainView::showSetlistMenu()
+{
+    juce::PopupMenu menu;
+    const auto setlists = Setlist::findAll();
+
+    menu.addItem(1, "No setlist (rigs folder order)", true, !mHasSetlist);
+
+    if (!setlists.isEmpty())
+        menu.addSectionHeader("Setlists");
+
+    int id = 100;
+    for (const auto& file : setlists)
+        menu.addItem(juce::PopupMenu::Item(file.getFileNameWithoutExtension())
+                         .setID(id++)
+                         .setTicked(mHasSetlist && mSetlist.name == file.getFileNameWithoutExtension()));
+
+    menu.addSeparator();
+    menu.addItem(2, "New setlist from all rigs...");
+    menu.addItem(3, "Show setlists folder");
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&mSettingsButton),
+                       [this, setlists](int choice) {
+        if (choice == 1)
+        {
+            mHasSetlist = false;
+            refreshHeader();
+        }
+        else if (choice == 2)
+        {
+            auto window = std::make_shared<juce::AlertWindow>("New setlist", "",
+                                                              juce::MessageBoxIconType::NoIcon, this);
+            window->addTextEditor("name", "Set 1");
+            window->addButton("Create", 1, juce::KeyPress(juce::KeyPress::returnKey));
+            window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+            window->enterModalState(true, juce::ModalCallbackFunction::create([this, window](int result) {
+                if (result != 1)
+                    return;
+
+                auto name = juce::File::createLegalFileName(
+                    window->getTextEditorContents("name").trim());
+                if (name.isEmpty())
+                    name = "Set 1";
+
+                // Seeded with every rig in folder order: reordering in a text
+                // editor beats building a list from nothing.
+                Setlist created;
+                created.name = name;
+
+                for (const auto& rig : getRigsFolder().findChildFiles(
+                         juce::File::findFiles, false, "*" + juce::String(rigfiles::kFileExtension)))
+                    created.rigNames.add(rig.getFileNameWithoutExtension());
+
+                created.saveTo(Setlist::getFolder().getChildFile(name + Setlist::getFileExtension()));
+                Setlist::getFolder().revealToUser();
+            }));
+        }
+        else if (choice == 3)
+        {
+            Setlist::getFolder().revealToUser();
+        }
+        else if (choice >= 100 && choice - 100 < setlists.size())
+        {
+            mHasSetlist = mSetlist.loadFrom(setlists[choice - 100]);
+            refreshHeader();
+        }
+    });
+}
+
+void MainView::enterGigView()
+{
+    if (mGigView != nullptr)
+        return;
+
+    closeAllWindows();
+
+    mGigView = std::make_unique<GigView>(mProcessor);
+    mGigView->rigName = mCurrentRigFile != juce::File{}
+                            ? mCurrentRigFile.getFileNameWithoutExtension()
+                            : juce::String("No rig");
+    mGigView->onExit = [this] { exitGigView(); };
+    mGigView->onStepRig = [this](int direction) { stepRig(direction); };
+
+    addAndMakeVisible(*mGigView);
+    mGigView->setBounds(getLocalBounds());
+    mGigView->toFront(true);
+}
+
+void MainView::exitGigView()
+{
+    mGigView = nullptr;
+    resized();
 }
 
 void MainView::markSavedState()
@@ -1676,6 +1798,11 @@ void MainView::showSettings()
     menu.addItem(17, "Redo " + undo.getRedoDescription() + "   (Shift Cmd Z)", undo.canRedo());
     menu.addSeparator();
 
+    menu.addSectionHeader("Show");
+    menu.addItem(18, "Setlist...");
+    menu.addItem(19, "Gig view");
+    menu.addSeparator();
+
     menu.addSectionHeader("Control");
     menu.addItem(15, "MIDI mappings...");
     menu.addSeparator();
@@ -1716,6 +1843,8 @@ void MainView::showSettings()
                                              Tone3000Panel::kPreferredHeight
                                                  + BlockWindow::kTitleBarHeight);
                 break;
+            case 18: showSetlistMenu(); break;
+            case 19: enterGigView(); break;
             case 16: mProcessor.getUndoHistory().undo(); break;
             case 17: mProcessor.getUndoHistory().redo(); break;
             case 15:
@@ -1769,7 +1898,12 @@ void MainView::resized()
     mTransportBar.setBounds(header.removeFromLeft(216).withSizeKeepingCentre(216, 40));
 
     // Right: watch, tune, save, configure.
+    if (mGigView != nullptr)
+        mGigView->setBounds(getLocalBounds());
+
     mSettingsButton.setBounds(header.removeFromRight(80).withSizeKeepingCentre(80, 28));
+    header.removeFromRight(theme::metrics::gap);
+    mGigButton.setBounds(header.removeFromRight(48).withSizeKeepingCentre(48, 28));
     header.removeFromRight(theme::metrics::gap);
     mSaveButton.setBounds(header.removeFromRight(58).withSizeKeepingCentre(58, 28));
     header.removeFromRight(theme::metrics::gap);

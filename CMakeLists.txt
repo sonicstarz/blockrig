@@ -84,6 +84,7 @@ set(BLOCKRIG_SOURCES
     src/midi/MidiEngine.cpp
     src/state/RigState.cpp
     src/state/BlockFavorites.cpp
+    src/state/Setlist.cpp
     src/state/Snapshots.cpp
     src/state/UndoHistory.cpp
     src/state/RigFiles.cpp
@@ -116,6 +117,7 @@ set(BLOCKRIG_SOURCES
     src/ui/AppShell.cpp
     src/ui/SnapshotStrip.cpp
     src/ui/BuiltInBlockPanel.cpp
+    src/ui/GigView.cpp
     src/ui/MidiPanel.cpp
     src/ui/Tone3000Panel.cpp
     src/ui/TunerPanel.cpp
@@ -317,6 +319,7 @@ if(BLOCKRIG_BUILD_TESTS)
         src/midi/MidiEngine.cpp
         src/state/RigState.cpp
     src/state/BlockFavorites.cpp
+    src/state/Setlist.cpp
     src/state/Snapshots.cpp
     src/state/UndoHistory.cpp
     src/state/RigFiles.cpp

@@ -74,13 +74,76 @@ void MidiEngine::handleIncomingMidiMessage(juce::MidiInput*, const juce::MidiMes
     handle(message);
 }
 
+bool MidiEngine::isReceivingClock() const
+{
+    return juce::Time::currentTimeMillis() - mLastClockMs.load(std::memory_order_relaxed) < 500;
+}
+
+MidiEngine::Activity MidiEngine::getLastActivity() const
+{
+    return {mActivityCc.load(std::memory_order_relaxed), mActivityValue.load(std::memory_order_relaxed),
+            mActivityChannel.load(std::memory_order_relaxed),
+            mActivityMs.load(std::memory_order_relaxed)};
+}
+
+void MidiEngine::handleClock()
+{
+    // 24 pulses per quarter note. Averaging a full beat's worth of intervals
+    // rides out the jitter every MIDI source has; a per-pulse estimate would
+    // make the tempo readout dance.
+    const auto now = juce::Time::getHighResolutionTicks();
+
+    if (mLastPulseTicks != 0)
+    {
+        const auto seconds = juce::Time::highResolutionTicksToSeconds(now - mLastPulseTicks);
+
+        if (seconds > 0.0005 && seconds < 0.2) // 12.5 to 5000 bpm: plausible pulses only
+        {
+            mClockIntervals[mClockPulseCount % 24] = seconds;
+            ++mClockPulseCount;
+
+            if (mClockPulseCount >= 24)
+            {
+                double total = 0.0;
+                for (const auto interval : mClockIntervals)
+                    total += interval;
+
+                const auto bpm = 60.0 / (total / 24.0 * 24.0);
+                mClockBpm.store(bpm, std::memory_order_relaxed);
+
+                if (mFollowClock.load(std::memory_order_relaxed))
+                    mProcessor.getTransport().setBpm(bpm);
+            }
+        }
+    }
+
+    mLastPulseTicks = now;
+    mLastClockMs.store(juce::Time::currentTimeMillis(), std::memory_order_relaxed);
+}
+
 void MidiEngine::handle(const juce::MidiMessage& message)
 {
-    // Program change recalls the snapshot with that number. Structural, so it
-    // goes to the message thread; the UI notices activeIndex move and catches up.
+    if (message.isMidiClock())
+    {
+        handleClock();
+        return;
+    }
+
+    // Program change recalls the snapshot with that number, or the rig, per the
+    // configured target. Structural, so it goes to the message thread; the UI
+    // notices activeIndex move and catches up.
     if (message.isProgramChange())
     {
         const auto program = message.getProgramChangeNumber();
+
+        if (getProgramTarget() == ProgramTarget::rigs)
+        {
+            juce::MessageManager::callAsync([this, program] {
+                if (onRigProgramRequested)
+                    onRigProgramRequested(program);
+            });
+            return;
+        }
 
         juce::MessageManager::callAsync([this, program] {
             auto& bank = mProcessor.getSnapshots();
@@ -104,6 +167,12 @@ void MidiEngine::handle(const juce::MidiMessage& message)
 
     const auto cc = message.getControllerNumber();
     const auto value = message.getControllerValue();
+    const auto channel = message.getChannel();
+
+    mActivityCc.store(cc, std::memory_order_relaxed);
+    mActivityValue.store(value, std::memory_order_relaxed);
+    mActivityChannel.store(channel, std::memory_order_relaxed);
+    mActivityMs.store(juce::Time::currentTimeMillis(), std::memory_order_relaxed);
 
     // Learn wins over dispatch: the wiggle that teaches a mapping must not also
     // fire whatever that CC used to do.
@@ -112,7 +181,12 @@ void MidiEngine::handle(const juce::MidiMessage& message)
         {
             const juce::ScopedLock lock(mLock);
             if (armed < static_cast<int>(mMappings.size()))
+            {
+                // Learn the channel too: a controller that sends on channel 3
+                // should not be answered by a different pedal on channel 1.
                 mMappings[static_cast<size_t>(armed)].cc = cc;
+                mMappings[static_cast<size_t>(armed)].channel = channel;
+            }
         }
 
         if (onMappingsChanged)
@@ -123,16 +197,16 @@ void MidiEngine::handle(const juce::MidiMessage& message)
         return;
     }
 
-    dispatch(cc, value);
+    dispatch(cc, value, channel);
 }
 
-void MidiEngine::dispatch(int cc, int value)
+void MidiEngine::dispatch(int cc, int value, int channel)
 {
     std::vector<Mapping> matches;
     {
         const juce::ScopedLock lock(mLock);
         for (const auto& mapping : mMappings)
-            if (mapping.cc == cc)
+            if (mapping.cc == cc && (mapping.channel == 0 || mapping.channel == channel))
                 matches.push_back(mapping);
     }
 
@@ -168,7 +242,11 @@ void MidiEngine::dispatch(int cc, int value)
         }
         else
         {
-            parameter->setValueNotifyingHost(static_cast<float>(value) / 127.0f);
+            // The pedal's travel maps onto the mapping's range, so an expression
+            // pedal can sweep just the part of a parameter that matters.
+            const auto normalised = static_cast<float>(value) / 127.0f;
+            const auto scaled = mapping.minimum + normalised * (mapping.maximum - mapping.minimum);
+            parameter->setValueNotifyingHost(juce::jlimit(0.0f, 1.0f, scaled));
         }
     }
 }
@@ -247,6 +325,9 @@ juce::ValueTree MidiEngine::toValueTree() const
         entry.setProperty("parameterIndex", mapping.parameterIndex, nullptr);
         entry.setProperty("globalId", mapping.globalId, nullptr);
         entry.setProperty("toggle", mapping.toggle, nullptr);
+        entry.setProperty("channel", mapping.channel, nullptr);
+        entry.setProperty("minimum", mapping.minimum, nullptr);
+        entry.setProperty("maximum", mapping.maximum, nullptr);
         entry.setProperty("description", mapping.description, nullptr);
         tree.appendChild(entry, nullptr);
     }
@@ -269,6 +350,9 @@ void MidiEngine::restoreFrom(const juce::ValueTree& tree)
         mapping.parameterIndex = entry.getProperty("parameterIndex", -1);
         mapping.globalId = entry.getProperty("globalId", "").toString();
         mapping.toggle = entry.getProperty("toggle", false);
+        mapping.channel = entry.getProperty("channel", 0);
+        mapping.minimum = entry.getProperty("minimum", 0.0f);
+        mapping.maximum = entry.getProperty("maximum", 1.0f);
         mapping.description = entry.getProperty("description", "").toString();
         mappings.push_back(std::move(mapping));
     }
