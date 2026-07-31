@@ -119,6 +119,7 @@ private:
     juce::String mSavedStateXml;
     bool mDirty = false;
     int mDirtyCheckCountdown = 0;
+    int mShownSnapshotIndex = -1;
 
     SnapshotStrip mSnapshots;
 

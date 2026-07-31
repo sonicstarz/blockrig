@@ -183,6 +183,10 @@ void BlockRigProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
     mTransport.advance(numSamples);
 
+    // In a DAW this buffer is the only MIDI there is; standalone it is empty
+    // and the engine hears the devices directly.
+    mMidiEngine.processBuffer(midi);
+
     // The input end of the lane. Mono is the guitarist's case: one channel feeds
     // the whole (stereo) lane, so effects downstream can widen it.
     if (mInputMode == InputMode::mono && numOutputs >= 2)

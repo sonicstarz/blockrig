@@ -9,6 +9,7 @@
 #include "host/PluginCatalog.h"
 #include "host/Transport.h"
 #include "dsp/PitchDetector.h"
+#include "midi/MidiEngine.h"
 #include "state/Snapshots.h"
 
 namespace blockrig
@@ -153,6 +154,7 @@ public:
     PitchDetector& getPitchDetector() { return mPitchDetector; }
 
     snapshots::Bank& getSnapshots() { return mSnapshotBank; }
+    MidiEngine& getMidiEngine() { return mMidiEngine; }
     bool isTestTonePlaying() const { return mTestToneSamplesLeft.load(std::memory_order_relaxed) > 0; }
 
     /// How many times processBlock has run. Distinguishes "the audio callback
@@ -216,6 +218,7 @@ private:
     std::atomic<juce::int64> mProcessBlockCount{0};
     PitchDetector mPitchDetector;
     snapshots::Bank mSnapshotBank;
+    MidiEngine mMidiEngine{*this};
     std::atomic<bool> mTunerActive{false};
 
     std::atomic<int> mTestToneSamplesLeft{0};

@@ -1,5 +1,6 @@
 #include "ui/MainView.h"
 
+#include "ui/MidiPanel.h"
 #include "ui/Tone3000Panel.h"
 #include "ui/TunerPanel.h"
 
@@ -744,6 +745,9 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     mSnapshots.onTunerRecalled = [this](bool shouldBeOpen) { showTuner(shouldBeOpen); };
     addAndMakeVisible(mSnapshots);
 
+    // A footswitch can change rigs and snapshots; the UI follows the engine.
+    mProcessor.getMidiEngine().onRigStepRequested = [this](int direction) { stepRig(direction); };
+
     addAndMakeVisible(mLane);
 
     mMuteBanner.onClick = [this] {
@@ -832,6 +836,7 @@ MainView::~MainView()
     removeKeyListener(this);
     mProcessor.onChainChanged = nullptr;
     mProcessor.onBlockAboutToBeRemoved = nullptr;
+    mProcessor.getMidiEngine().onRigStepRequested = nullptr;
     // Windows own hosted editors, so they must go before the chain does.
     closeAllWindows();
     setLookAndFeel(nullptr);
@@ -1100,6 +1105,18 @@ void MainView::mouseUp(const juce::MouseEvent& event)
 
 void MainView::timerCallback()
 {
+    // MIDI recalls snapshots and the tuner behind the UI's back; catch up here
+    // rather than threading callbacks through every path that can change them.
+    if (mProcessor.getSnapshots().activeIndex != mShownSnapshotIndex)
+    {
+        mShownSnapshotIndex = mProcessor.getSnapshots().activeIndex;
+        mSnapshots.refresh();
+    }
+
+    const bool tunerOpen = findWindowForBlock("tuner") != nullptr;
+    if (mProcessor.isTunerActive() != tunerOpen)
+        showTuner(mProcessor.isTunerActive());
+
     // Serializing the whole rig means asking every plug-in for its chunk, so the
     // dirty check runs on a slow cadence rather than every tick.
     if (mCurrentRigFile != juce::File{} && --mDirtyCheckCountdown <= 0)
@@ -1568,6 +1585,10 @@ void MainView::showSettings()
     menu.addItem(14, "Browse TONE3000...");
     menu.addSeparator();
 
+    menu.addSectionHeader("Control");
+    menu.addItem(15, "MIDI mappings...");
+    menu.addSeparator();
+
     menu.addItem(1, "Rescan plug-ins...");
     menu.addItem(3, "Close all windows", !mWindows.empty());
     menu.addSeparator();
@@ -1602,6 +1623,14 @@ void MainView::showSettings()
                 if (!mWindows.empty())
                     mWindows.back()->setSize(Tone3000Panel::kPreferredWidth,
                                              Tone3000Panel::kPreferredHeight
+                                                 + BlockWindow::kTitleBarHeight);
+                break;
+            case 15:
+                openUtilityWindow("MIDI", BlockCategory::utility,
+                                  std::make_unique<MidiPanel>(mProcessor));
+                if (!mWindows.empty())
+                    mWindows.back()->setSize(MidiPanel::kPreferredWidth,
+                                             MidiPanel::kPreferredHeight
                                                  + BlockWindow::kTitleBarHeight);
                 break;
             case 4:

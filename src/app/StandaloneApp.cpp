@@ -149,6 +149,7 @@ public:
         {
             saveDeviceState();
             mProcessor->getCatalog().saveToStorage();
+            mDeviceManager.removeMidiInputDeviceCallback({}, &mProcessor->getMidiEngine());
             mPlayer.setProcessor(nullptr);
             mDeviceManager.removeAudioCallback(&mPlayer);
         }
@@ -247,6 +248,14 @@ private:
 
         mPlayer.setProcessor(mProcessor.get());
         mDeviceManager.addAudioCallback(&mPlayer);
+
+        // Every MIDI input feeds the engine. Enabling them all is what a floor
+        // unit does; nobody wants to find an "enable controller" checkbox on a
+        // dark stage.
+        for (const auto& input : juce::MidiInput::getAvailableDevices())
+            mDeviceManager.setMidiInputDeviceEnabled(input.identifier, true);
+
+        mDeviceManager.addMidiInputDeviceCallback({}, &mProcessor->getMidiEngine());
 
         logAudioStatus();
     }

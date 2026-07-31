@@ -81,6 +81,7 @@ add_subdirectory(third_party/JUCE)
 # ---------------------------------------------------------------------------
 set(BLOCKRIG_SOURCES
     src/BlockRigProcessor.cpp
+    src/midi/MidiEngine.cpp
     src/state/RigState.cpp
     src/state/Snapshots.cpp
     src/state/RigFiles.cpp
@@ -93,6 +94,7 @@ set(BLOCKRIG_SOURCES
     src/host/InternalBlockFormat.cpp
     src/blocks/nam/CaptureLibrary.cpp
     src/blocks/nam/DownloadsWatcher.cpp
+    src/midi/MidiEngine.cpp
     src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
     src/dsp/AmpSlot.cpp
@@ -107,6 +109,7 @@ set(BLOCKRIG_SOURCES
     src/ui/TransportBar.cpp
     src/ui/AppShell.cpp
     src/ui/SnapshotStrip.cpp
+    src/ui/MidiPanel.cpp
     src/ui/Tone3000Panel.cpp
     src/ui/TunerPanel.cpp
     src/ui/LaneView.cpp
@@ -228,8 +231,6 @@ if(BLOCKRIG_BUILD_TESTS)
     src/host/Transport.cpp
         src/host/InternalBlockFormat.cpp
         src/blocks/nam/CaptureLibrary.cpp
-    src/blocks/nam/DownloadsWatcher.cpp
-    src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
@@ -266,8 +267,6 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
         src/blocks/nam/CaptureLibrary.cpp
-    src/blocks/nam/DownloadsWatcher.cpp
-    src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp
@@ -300,6 +299,7 @@ if(BLOCKRIG_BUILD_TESTS)
         tests/rig_tests.cpp
         tests/headless_editor_stub.cpp
         src/BlockRigProcessor.cpp
+        src/midi/MidiEngine.cpp
         src/state/RigState.cpp
     src/state/Snapshots.cpp
     src/state/RigFiles.cpp
@@ -310,8 +310,6 @@ if(BLOCKRIG_BUILD_TESTS)
         src/host/PluginScannerWorker.cpp
         src/host/InternalBlockFormat.cpp
         src/blocks/nam/CaptureLibrary.cpp
-    src/blocks/nam/DownloadsWatcher.cpp
-    src/net/Tone3000Client.cpp
     src/blocks/nam/NamBlockProcessor.cpp
         src/dsp/AmpSlot.cpp
         src/dsp/ToneStack.cpp

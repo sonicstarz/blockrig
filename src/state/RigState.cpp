@@ -211,6 +211,7 @@ juce::ValueTree toValueTree(BlockRigProcessor& processor)
     }
 
     rig.appendChild(processor.getSnapshots().toValueTree(), nullptr);
+    rig.appendChild(processor.getMidiEngine().toValueTree(), nullptr);
 
     juce::ValueTree transport("Transport");
     transport.setProperty("bpm", processor.getTransport().getBpm(), nullptr);
@@ -290,6 +291,7 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
         processor.applyAudioStateXml(audio.getProperty("deviceStateXml").toString());
 
     processor.getSnapshots().restoreFrom(rig.getChildWithName("Snapshots"));
+    processor.getMidiEngine().restoreFrom(rig.getChildWithName("MidiMappings"));
 
     if (const auto transport = rig.getChildWithName("Transport"); transport.isValid())
     {
