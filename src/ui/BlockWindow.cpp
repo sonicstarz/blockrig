@@ -42,6 +42,24 @@ void BlockWindow::setPinned(bool shouldBePinned)
     repaint();
 }
 
+void BlockWindow::setSubtitle(juce::String subtitle)
+{
+    mSubtitle = std::move(subtitle);
+    repaint();
+}
+
+void BlockWindow::setTitleBarContent(juce::Component* row, int preferredWidth, bool alignAfterTitle)
+{
+    mTitleBarContent = row;
+    mTitleBarContentWidth = preferredWidth;
+    mTitleBarContentAfterTitle = alignAfterTitle;
+
+    if (row != nullptr)
+        addAndMakeVisible(*row);
+
+    resized();
+}
+
 juce::Rectangle<int> BlockWindow::getTitleBarBounds() const
 {
     return getLocalBounds().removeFromTop(kTitleBarHeight);
@@ -91,7 +109,7 @@ void BlockWindow::paint(juce::Graphics& g)
     g.fillRect(titleBar.getX(), titleBar.getBottom() - 1.0f, titleBar.getWidth(), 1.0f);
 
     auto text = titleBar.reduced(14.0f, 0.0f);
-    text.removeFromRight(84.0f); // room for the buttons
+    text.removeFromRight(84.0f + static_cast<float>(mTitleBarContentWidth)); // buttons + lent controls
 
     // The 8×26 category bar with glow.
     const juce::Rectangle<float> bar(text.getX(), titleBar.getCentreY() - 13.0f, 8.0f, 26.0f);
@@ -120,6 +138,21 @@ void BlockWindow::resized()
     mClose.setBounds(titleBar.removeFromRight(26));
     titleBar.removeFromRight(4);
     mPin.setBounds(titleBar.removeFromRight(48));
+
+    if (mTitleBarContent != nullptr)
+    {
+        if (mTitleBarContentAfterTitle)
+        {
+            // Past the category bar and a short title ("EQ").
+            titleBar.removeFromLeft(90);
+            mTitleBarContent->setBounds(titleBar.removeFromLeft(mTitleBarContentWidth));
+        }
+        else
+        {
+            titleBar.removeFromRight(8);
+            mTitleBarContent->setBounds(titleBar.removeFromRight(mTitleBarContentWidth));
+        }
+    }
 
     if (mContent != nullptr)
         mContent->setBounds(getLocalBounds().withTrimmedTop(kTitleBarHeight));

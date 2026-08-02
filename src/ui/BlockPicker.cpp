@@ -165,7 +165,7 @@ void BlockPicker::rebuildEntries()
     const int selectable = static_cast<int>(std::count_if(mEntries.begin(), mEntries.end(),
                                                           [](const Entry& e) { return !e.isHeader; }));
     mHint.setText(juce::String(selectable) + " block" + (selectable == 1 ? "" : "s")
-                      + "   •   Enter to add, Esc to dismiss",
+                      + juce::String::fromUTF8("   •   Enter to add, Esc to dismiss"),
                   juce::dontSendNotification);
 
     mList.updateContent();
@@ -233,9 +233,11 @@ void BlockPicker::paintListBoxItem(int row, juce::Graphics& g, int width, int he
             drawCategoryIcon(g, header.removeFromLeft(16).toFloat().reduced(1.0f), entry.category,
                              getCategoryColour(entry.category), 1.3f);
 
+        // Sentence case: the all-caps letterspaced treatment was rejected in
+        // design review.
         g.setColour(theme::colours::textFaint);
-        g.setFont(juce::FontOptions(10.5f, juce::Font::bold));
-        g.drawText(entry.sectionLabel.toUpperCase(), header.withTrimmedLeft(4),
+        g.setFont(theme::fonts::ui(11.0f, 500));
+        g.drawText(entry.sectionLabel, header.withTrimmedLeft(4),
                    juce::Justification::bottomLeft, true);
         return;
     }
@@ -254,11 +256,15 @@ void BlockPicker::paintListBoxItem(int row, juce::Graphics& g, int width, int he
                      getCategoryColour(category), 1.3f);
     text.removeFromLeft(4);
 
-    // Format badge on the right, so scanning the list by type is easy.
-    const auto badge = entry.isBuiltIn ? juce::String("BUILT-IN")
-                                       : entry.description.pluginFormatName.toUpperCase();
+    // Format badge on the right, so scanning the list by type is easy. Format
+    // names stay acronyms ("AU", "VST3") — those aren't the rejected caps
+    // treatment, they're how the formats are written.
+    const auto badge = entry.isBuiltIn ? juce::String("Built-in")
+                       : entry.description.pluginFormatName == "AudioUnit"
+                           ? juce::String("AU")
+                           : entry.description.pluginFormatName;
     g.setColour(entry.isBuiltIn ? theme::colours::accent : theme::colours::textFaint);
-    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+    g.setFont(theme::fonts::ui(10.0f, 500));
     g.drawText(badge, text.removeFromRight(56), juce::Justification::centredRight, false);
 
     g.setColour(theme::colours::text);

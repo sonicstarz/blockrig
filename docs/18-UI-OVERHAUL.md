@@ -1,6 +1,9 @@
 # 18 — UI overhaul (design_handoff_blockrig_ui)
 
-Source of truth: `~/Downloads/design_handoff_blockrig_ui/` — README + HTML canvas.
+Source of truth: `~/Downloads/design_handoff_blockrig_ui 2/` — README + HTML canvas
++ `screenshots/` (2× PNGs of every approved screen; the "2" bundle added these).
+Verify against the screenshots by running the app, not by reading code — that
+difference is what made the first S4 attempt bad.
 Approved: Turn 4 (`4a`–`4j`) with `5a` replacing `4b`. High fidelity. One global
 correction from review: **sentence-case labels in the UI face**; mono reserved for
 numerics (BPM, dB, Hz, ms, CPU %).
@@ -29,8 +32,23 @@ numerics (BPM, dB, Hz, ms, CPU %).
   endcaps with signal bars, byp at 45%, active dot badge), **docked editor** at the
   bottom replacing floating block windows (Pin stacks; utility panels stay as
   dialogs/menus).
-- **S4 Editors**: knob spec everywhere; NAM (amber), IR (teal + impulse waveform
-  well), EQ (blue + interactive response graph with band handles + band chips).
+- **S4 Editors** — **DONE (2026-08-02, verified against the mock screenshots in
+  the running app)**: shared editor chrome in `theme::editor` (76px knob cells,
+  mono value under knob then sentence-case caption; the first S4a attempt only
+  tinted arcs and was redone). Panels lend controls to the BlockWindow title bar
+  (`setTitleBarContent` + `setSubtitle`): NAM gets filename + Library/Open/Clear
+  + EQ/Gate/Stereo toggles (4c), IR gets its file buttons (4f), EQ gets the band
+  chip row placed after the title (4g). IR body: teal knobs + inset impulse well
+  drawn from the loaded file (signed per-bucket peaks) with "N ms · N kHz"
+  caption. EQ body: full rebuild — response graph mirroring the processor's
+  coefficient math, drag handles (drag = freq/gain, wheel = Q, click selects),
+  Freq/Gain/Q knobs for the selected band, Band-on (new `ls/b1/b2/hs_on` params,
+  default on, gated in processBlock). Rejected all-caps captions swept out of
+  NAM/IR/EQ/Utility panels and the picker.
+  Fixed along the way: home-tile crash (openRig took `const File&` into code
+  that destroys the File's owner — now by-value + deferred activation), and a
+  systemic mojibake sweep (non-ASCII UI literals read as Latin-1 → ellipses now
+  ASCII, ·/—/• wrapped in `String::fromUTF8`).
 - **S5 Picker/menus/dialog**: 4d category-chip picker with favourite stars, 4e menu
   styling (comes mostly free from S1 LnF), 4h save-scene dialog.
 - **S6 Tuner + Gig**: 4i full-screen tuner (segmented Needle/Strobe, ±5¢ green

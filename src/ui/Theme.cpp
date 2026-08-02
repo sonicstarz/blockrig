@@ -464,6 +464,73 @@ juce::Font Look::getAlertWindowFont()
 }
 
 //==============================================================================
+namespace editor
+{
+void styleKnob(juce::Slider& slider, juce::Colour category)
+{
+    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+
+    // 270° sweep, gap at the bottom: needle travels -135°...+135°.
+    slider.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f,
+                               juce::MathConstants<float>::pi * 2.75f, true);
+
+    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 72, valueHeight);
+    slider.setColour(juce::Slider::rotarySliderFillColourId, category);
+    slider.setColour(juce::Slider::textBoxTextColourId, colours::text);
+    slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+}
+
+void styleCaption(juce::Label& label, const juce::String& text)
+{
+    label.setText(text, juce::dontSendNotification);
+    label.setJustificationType(juce::Justification::centred);
+    label.setFont(fonts::ui(12.0f, 500));
+    label.setColour(juce::Label::textColourId, colours::textFaint);
+}
+
+void layoutKnobCell(juce::Rectangle<int> cell, juce::Slider& slider, juce::Label& caption)
+{
+    caption.setBounds(cell.removeFromBottom(captionHeight));
+    slider.setBounds(cell); // knob on top, the value textbox sits below it
+}
+
+void paintWell(juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    g.setColour(colours::inset);
+    g.fillRoundedRectangle(bounds, metrics::radiusMd + 1.0f);
+    g.setColour(colours::hairline);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), metrics::radiusMd + 1.0f, 1.0f);
+}
+} // namespace editor
+
+//==============================================================================
+void TitleBarRow::add(juce::Component& item, int width)
+{
+    mItems.push_back({&item, width});
+    addAndMakeVisible(item);
+    mPreferredWidth += width + (mItems.size() > 1 ? kGap : 0);
+}
+
+void TitleBarRow::addGap(int width)
+{
+    mItems.push_back({nullptr, width});
+    mPreferredWidth += width + (mItems.size() > 1 ? kGap : 0);
+}
+
+void TitleBarRow::resized()
+{
+    auto area = getLocalBounds();
+
+    for (auto& item : mItems)
+    {
+        auto slot = area.removeFromLeft(item.width);
+        if (item.component != nullptr)
+            item.component->setBounds(slot.withSizeKeepingCentre(item.width, juce::jmin(26, getHeight())));
+        area.removeFromLeft(kGap);
+    }
+}
+
+//==============================================================================
 juce::Colour colourForCategory(const juce::String& category, const juce::String& name)
 {
     const auto haystack = (category + " " + name).toLowerCase();

@@ -136,7 +136,7 @@ void MidiPanel::timerCallback()
         text = "no MIDI yet";
 
     if (engine.isReceivingClock())
-        text += "   ·   clock in";
+        text += juce::String::fromUTF8("   ·   clock in");
 
     mActivity.setText(text, juce::dontSendNotification);
     mList.repaint(); // armed rows animate their prompt
@@ -277,7 +277,7 @@ void MidiPanel::showAddMenu()
 
             mapping.blockUid = block->getUid();
             mapping.parameterIndex = parameterIndex;
-            mapping.description = block->getDisplayName() + "  ·  "
+            mapping.description = block->getDisplayName() + juce::String::fromUTF8("  ·  ")
                                   + plugin->getParameters()[parameterIndex]->getName(48);
         }
         else if (choice >= 1000)

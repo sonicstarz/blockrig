@@ -33,6 +33,17 @@ public:
     void setPinned(bool shouldBePinned);
     bool isPinned() const { return mPinned; }
 
+    /// The muted mono line after the title — the capture / IR filename in the
+    /// mock. Panels update it as files load.
+    void setSubtitle(juce::String subtitle);
+
+    /// Controls the panel lends to the title bar (Library/Open..., header
+    /// toggles, EQ band chips). Owned by the content component, which outlives
+    /// every layout pass. Right-aligned before the Pin button by default;
+    /// `alignAfterTitle` puts it just after the title instead (4g's band
+    /// chips sit next to "EQ", not by the window buttons).
+    void setTitleBarContent(juce::Component* row, int preferredWidth, bool alignAfterTitle = false);
+
     /// Docked editors sit in the bottom strip (block editors); floating ones
     /// centre over the rig (utility panels) and dim the backdrop.
     void setDocked(bool shouldBeDocked) { mDocked = shouldBeDocked; }
@@ -51,6 +62,10 @@ private:
     juce::String mTitle, mSubtitle;
     BlockCategory mCategory;
     std::unique_ptr<juce::Component> mContent;
+
+    juce::Component::SafePointer<juce::Component> mTitleBarContent;
+    int mTitleBarContentWidth = 0;
+    bool mTitleBarContentAfterTitle = false;
 
     juce::TextButton mClose{"X"};
     juce::TextButton mPin{"Pin"};

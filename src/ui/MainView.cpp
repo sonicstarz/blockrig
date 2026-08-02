@@ -280,7 +280,7 @@ private:
         {
             const auto channels = mKind == EndBlock::Kind::input ? device->getInputChannelNames()
                                                                  : device->getOutputChannelNames();
-            mDescription.setText(device->getName() + "   •   " + juce::String(channels.size()) + " channels",
+            mDescription.setText(device->getName() + juce::String::fromUTF8("   •   ") + juce::String(channels.size()) + " channels",
                                  juce::dontSendNotification);
         }
         else
@@ -502,7 +502,7 @@ public:
                     setProgress(static_cast<double>(progress.scanned) / progress.total);
 
                 setStatusMessage(juce::String(progress.scanned) + " of " + juce::String(progress.total)
-                                 + "   •   " + juce::String(progress.found) + " found\n"
+                                 + juce::String::fromUTF8("   •   ") + juce::String(progress.found) + " found\n"
                                  + progress.currentPluginName);
             },
             [this] { return threadShouldExit(); });
@@ -932,7 +932,7 @@ void MainView::updatePanel()
         hint = "Click a block to open it. Pin windows here to keep them open.";
 
     if (noPlugins)
-        hint += "\n\nNo plug-ins scanned yet — use  Scan plug-ins  in the header.";
+        hint += juce::String::fromUTF8("\n\nNo plug-ins scanned yet — use  Scan plug-ins  in the header.");
 
     if (mProcessor.isMuted())
         hint += "\n\nOutput is muted.";
@@ -1006,17 +1006,52 @@ void MainView::openBlockWindow(const juce::String& uid)
     int width = BlockWindow::kDefaultWidth;
     int height = BlockWindow::kDefaultHeight;
 
+    // The built-in panels lend controls to the window's title bar (4c/4f/4g:
+    // Library/Open..., header toggles, the EQ band chips) and keep the window
+    // subtitle set to whatever file is loaded.
+    juce::Component* titleBarRow = nullptr;
+    int titleBarRowWidth = 0;
+    std::function<void(BlockWindow&)> bindSubtitle;
+
     if (auto* nam = dynamic_cast<NamBlockProcessor*>(plugin))
     {
-        content = std::make_unique<NamBlockPanel>(*nam);
-        width = 700;
-        height = 200 + BlockWindow::kTitleBarHeight;
+        auto panel = std::make_unique<NamBlockPanel>(*nam);
+        width = NamBlockPanel::kPreferredWidth;
+        height = NamBlockPanel::kPreferredHeight + BlockWindow::kTitleBarHeight;
+        titleBarRow = panel->getTitleBarRow();
+        titleBarRowWidth = panel->getTitleBarRowWidth();
+
+        auto* panelPtr = panel.get();
+        bindSubtitle = [panelPtr](BlockWindow& window) {
+            window.setSubtitle(panelPtr->getSubtitle());
+            panelPtr->onSubtitleChanged =
+                [safeWindow = juce::Component::SafePointer<BlockWindow>(&window)](
+                    const juce::String& text) {
+                    if (safeWindow != nullptr)
+                        safeWindow->setSubtitle(text);
+                };
+        };
+        content = std::move(panel);
     }
     else if (auto* ir = dynamic_cast<IrBlockProcessor*>(plugin))
     {
-        content = std::make_unique<IrBlockPanel>(*ir);
+        auto panel = std::make_unique<IrBlockPanel>(*ir);
         width = IrBlockPanel::kPreferredWidth;
         height = IrBlockPanel::kPreferredHeight + BlockWindow::kTitleBarHeight;
+        titleBarRow = panel->getTitleBarRow();
+        titleBarRowWidth = panel->getTitleBarRowWidth();
+
+        auto* panelPtr = panel.get();
+        bindSubtitle = [panelPtr](BlockWindow& window) {
+            window.setSubtitle(panelPtr->getSubtitle());
+            panelPtr->onSubtitleChanged =
+                [safeWindow = juce::Component::SafePointer<BlockWindow>(&window)](
+                    const juce::String& text) {
+                    if (safeWindow != nullptr)
+                        safeWindow->setSubtitle(text);
+                };
+        };
+        content = std::move(panel);
     }
     else if (auto* utility = dynamic_cast<UtilityBlockProcessor*>(plugin))
     {
@@ -1026,9 +1061,12 @@ void MainView::openBlockWindow(const juce::String& uid)
     }
     else if (auto* eq = dynamic_cast<EqBlockProcessor*>(plugin))
     {
-        content = std::make_unique<EqBlockPanel>(*eq, eq->getValueTreeState());
+        auto panel = std::make_unique<EqBlockPanel>(*eq);
         width = EqBlockPanel::kPreferredWidth;
         height = EqBlockPanel::kPreferredHeight + BlockWindow::kTitleBarHeight;
+        titleBarRow = panel->getTitleBarRow();
+        titleBarRowWidth = panel->getTitleBarRowWidth();
+        content = std::move(panel);
     }
     else if (plugin->hasEditor())
     {
@@ -1068,6 +1106,12 @@ void MainView::openBlockWindow(const juce::String& uid)
     window->blockUid = uid;
     window->setDocked(true);
     window->setSize(width, height);
+
+    if (titleBarRow != nullptr)
+        window->setTitleBarContent(titleBarRow, titleBarRowWidth,
+                                   dynamic_cast<EqBlockProcessor*>(plugin) != nullptr);
+    if (bindSubtitle)
+        bindSubtitle(*window);
 
     auto* windowPtr = window.get();
     window->onClose = [this, windowPtr] { closeWindow(windowPtr); };
@@ -1924,7 +1968,7 @@ void MainView::resized()
 
     auto header = area.removeFromTop(theme::metrics::headerHeight).reduced(theme::metrics::padding, 0);
 
-    // 4c order: mark · preset pill · BPM cluster … meters · Tuner · Gig · ⋯
+    // 4c order: mark · preset pill · BPM cluster ... meters · Tuner · Gig · ⋯
     mTitle.setBounds(header.removeFromLeft(34).withSizeKeepingCentre(34, 30));
     header.removeFromLeft(theme::metrics::gap);
 

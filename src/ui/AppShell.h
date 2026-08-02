@@ -48,8 +48,10 @@ private:
 
     void timerCallback() override;
     void showHome();
-    void openRig(const juce::File& file);
-    void openSetlist(const juce::File& setlistFile);
+    /// By value on purpose: callers pass Files owned by the home screen, and
+    /// the first thing these do is destroy the home screen.
+    void openRig(juce::File file);
+    void openSetlist(juce::File setlistFile);
     void scanThreadBody();
 
     BlockRigProcessor& mProcessor;

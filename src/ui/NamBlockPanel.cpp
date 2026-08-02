@@ -3,50 +3,31 @@
 #include <map>
 
 #include "ui/BlockCategories.h"
-#include "ui/Theme.h"
 
 namespace blockrig
 {
-namespace
-{
-void styleKnob(juce::Slider& slider)
-{
-    slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 66, 16);
-    slider.setColour(juce::Slider::textBoxTextColourId, theme::colours::text);
-}
-
-void styleCaption(juce::Label& label, const juce::String& text)
-{
-    label.setText(text.toUpperCase(), juce::dontSendNotification);
-    label.setJustificationType(juce::Justification::centred);
-    label.setFont(juce::FontOptions(9.5f, juce::Font::bold));
-    label.setColour(juce::Label::textColourId, theme::colours::textFaint);
-}
-} // namespace
 
 NamBlockPanel::NamBlockPanel(NamBlockProcessor& processor)
     : mProcessor(processor)
 {
-    mCaptureName.setFont(juce::FontOptions(16.0f, juce::Font::bold));
-    mCaptureName.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(mCaptureName);
-
-    mCaptureDetails.setFont(juce::FontOptions(11.0f));
-    mCaptureDetails.setColour(juce::Label::textColourId, theme::colours::textFaint);
-    mCaptureDetails.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(mCaptureDetails);
-
     mLibraryButton.setTooltip("Every capture you load is collected here automatically.");
     mLibraryButton.onClick = [this] { showLibraryMenu(); };
-    addAndMakeVisible(mLibraryButton);
 
     mLoadButton.setTooltip("Load a .nam file. It joins the library automatically.");
     mLoadButton.onClick = [this] { chooseCapture(); };
-    addAndMakeVisible(mLoadButton);
 
     mClearButton.onClick = [this] { mProcessor.clearModel(); };
-    addAndMakeVisible(mClearButton);
+
+    mStereo.setTooltip("Runs the capture twice, once per channel, so a stereo signal stays stereo "
+                       "through the amp. Costs a second model instance.");
+
+    mTitleBarRow.add(mLibraryButton, 70);
+    mTitleBarRow.add(mLoadButton, 68);
+    mTitleBarRow.add(mClearButton, 56);
+    mTitleBarRow.addGap(10);
+    mTitleBarRow.add(mEqOn, 52);
+    mTitleBarRow.add(mGateOn, 62);
+    mTitleBarRow.add(mStereo, 76);
 
     addKnob(mInTrim, mInTrimLabel, "Input", "in_trim", mInTrimAtt);
     addKnob(mBass, mBassLabel, "Bass", "bass", mBassAtt);
@@ -59,21 +40,15 @@ NamBlockPanel::NamBlockPanel(NamBlockProcessor& processor)
 
     auto& apvts = mProcessor.getValueTreeState();
 
-    addAndMakeVisible(mEqOn);
     mEqOnAtt = std::make_unique<ButtonAttachment>(apvts, "eq_on", mEqOn);
-
-    addAndMakeVisible(mGateOn);
     mGateOnAtt = std::make_unique<ButtonAttachment>(apvts, "gate_on", mGateOn);
+    mStereoAtt = std::make_unique<ButtonAttachment>(apvts, "stereo", mStereo);
 
     addAndMakeVisible(mCalibrateInput);
     mCalibrateInputAtt = std::make_unique<ButtonAttachment>(apvts, "cal_in", mCalibrateInput);
 
-    mStereo.setTooltip("Runs the capture twice, once per channel, so a stereo signal stays stereo through "
-                       "the amp. Costs a second model instance.");
-    addAndMakeVisible(mStereo);
-    mStereoAtt = std::make_unique<ButtonAttachment>(apvts, "stereo", mStereo);
-
-    styleCaption(mOutputModeLabel, "Output mode");
+    theme::editor::styleCaption(mOutputModeLabel, "Output mode");
+    mOutputModeLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(mOutputModeLabel);
     mOutputMode.addItemList({"Raw", "Normalized", "Calibrated"}, 1);
     addAndMakeVisible(mOutputMode);
@@ -94,11 +69,18 @@ NamBlockPanel::~NamBlockPanel()
 void NamBlockPanel::addKnob(juce::Slider& slider, juce::Label& label, const juce::String& caption,
                             const char* paramId, std::unique_ptr<SliderAttachment>& attachment)
 {
-    styleKnob(slider);
+    theme::editor::styleKnob(slider, getCategoryColour(BlockCategory::amp));
     addAndMakeVisible(slider);
-    styleCaption(label, caption);
+    theme::editor::styleCaption(label, caption);
     addAndMakeVisible(label);
     attachment = std::make_unique<SliderAttachment>(mProcessor.getValueTreeState(), paramId, slider);
+}
+
+void NamBlockPanel::setSubtitle(const juce::String& subtitle)
+{
+    mSubtitle = subtitle;
+    if (onSubtitleChanged)
+        onSubtitleChanged(mSubtitle);
 }
 
 void NamBlockPanel::showLibraryMenu()
@@ -188,14 +170,12 @@ void NamBlockPanel::refreshCaptureInfo()
 
     if (error.isNotEmpty())
     {
-        mCaptureName.setText("Could not load capture", juce::dontSendNotification);
-        mCaptureName.setColour(juce::Label::textColourId, theme::colours::bad);
-        mCaptureDetails.setText(error, juce::dontSendNotification);
+        setSubtitle("could not load: " + error);
+        mDetails.clear();
     }
     else if (info.json.isNotEmpty())
     {
-        mCaptureName.setText(info.name, juce::dontSendNotification);
-        mCaptureName.setColour(juce::Label::textColourId, theme::colours::text);
+        setSubtitle(info.name);
 
         juce::StringArray details;
         details.add(juce::String(juce::roundToInt(info.metrics.modelSampleRate / 1000.0)) + " kHz");
@@ -210,13 +190,12 @@ void NamBlockPanel::refreshCaptureInfo()
         if (info.metrics.slimmable)
             details.add("slimmable (A2)");
 
-        mCaptureDetails.setText(details.joinIntoString("   •   "), juce::dontSendNotification);
+        mDetails = details.joinIntoString(juce::String::fromUTF8("  \xc2\xb7  "));
     }
     else
     {
-        mCaptureName.setText("No capture loaded", juce::dontSendNotification);
-        mCaptureName.setColour(juce::Label::textColourId, theme::colours::textFaint);
-        mCaptureDetails.setText("Drop a .nam file here, or use Load capture", juce::dontSendNotification);
+        setSubtitle("no capture loaded");
+        mDetails = "Drop a .nam file here, or use Open...";
     }
 
     // Only offer what this particular capture supports.
@@ -280,95 +259,72 @@ void NamBlockPanel::filesDropped(const juce::StringArray& files, int, int)
 
 void NamBlockPanel::paint(juce::Graphics& g)
 {
-    auto bounds = getLocalBounds().toFloat();
-    const auto accent = getCategoryColour(BlockCategory::amp);
-
-    g.setColour(theme::colours::panel);
-    g.fillRect(bounds);
-
-    // A faceplate behind the controls with a lit top edge. Deliberately generic:
-    // a capture carries no artwork, and inventing a specific amp's livery for an
-    // arbitrary .nam would be a lie about what has been loaded.
-    auto plate = bounds.withTrimmedTop(52.0f).reduced(theme::metrics::gap, theme::metrics::gap * 0.5f);
-    g.setColour(theme::colours::background);
-    g.fillRoundedRectangle(plate, theme::metrics::cornerRadius);
-    g.setColour(accent.withAlpha(0.20f));
-    g.drawRoundedRectangle(plate, theme::metrics::cornerRadius, 1.0f);
-    g.setColour(accent.withAlpha(0.45f));
-    g.fillRect(plate.getX() + 14.0f, plate.getY(), plate.getWidth() - 28.0f, 1.4f);
-
-    // Header: the category glyph, then whatever capture is loaded.
-    auto header = bounds.removeFromTop(52.0f).reduced(theme::metrics::gap, 6.0f);
-    drawCategoryIcon(g, header.removeFromLeft(30.0f).reduced(2.0f, 7.0f), BlockCategory::amp, accent, 1.6f);
+    // Divider between the knob row and the output-mode column.
+    g.setColour(theme::colours::hairline);
+    g.fillRect(mDividerX, 10.0f, 1.0f, static_cast<float>(getHeight()) - 20.0f);
 
     // Gain staging visible while the knobs are being set.
-    auto meters = header.removeFromRight(86.0f).withTrimmedTop(6.0f);
     g.setColour(theme::colours::textFaint);
-    g.setFont(juce::FontOptions(8.5f, juce::Font::bold));
-    g.drawText("IN", meters.removeFromTop(9.0f), juce::Justification::topLeft, false);
-    theme::drawLevelMeter(g, meters.removeFromTop(5.0f), mInputLevel);
-    meters.removeFromTop(5.0f);
+    g.setFont(theme::fonts::ui(10.0f, 500));
+    g.drawText("In", mInMeter.withWidth(24.0f), juce::Justification::centredLeft, false);
+    theme::drawLevelMeter(g, mInMeter.withTrimmedLeft(26.0f), mInputLevel);
     g.setColour(theme::colours::textFaint);
-    g.drawText("OUT", meters.removeFromTop(9.0f), juce::Justification::topLeft, false);
-    theme::drawLevelMeter(g, meters.removeFromTop(5.0f), mOutputLevel);
+    g.drawText("Out", mOutMeter.withWidth(24.0f), juce::Justification::centredLeft, false);
+    theme::drawLevelMeter(g, mOutMeter.withTrimmedLeft(26.0f), mOutputLevel);
+
+    // The capture's metadata, faint along the bottom.
+    if (mDetails.isNotEmpty())
+    {
+        g.setColour(theme::colours::textGhost);
+        g.setFont(theme::fonts::mono(10.0f));
+        g.drawText(mDetails, mDetailsArea, juce::Justification::centredLeft, true);
+    }
 
     if (mDragHighlight)
     {
-        g.setColour(accent);
-        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(2.0f), theme::metrics::cornerRadius, 2.0f);
+        g.setColour(getCategoryColour(BlockCategory::amp));
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(2.0f), theme::metrics::radiusMd,
+                               2.0f);
     }
 }
 
 void NamBlockPanel::resized()
 {
-    auto area = getLocalBounds().reduced(theme::metrics::gap, 0);
+    auto area = getLocalBounds().reduced(theme::metrics::padding, 8);
 
-    auto header = area.removeFromTop(52).withTrimmedTop(6).withTrimmedBottom(6);
-    header.removeFromLeft(30);  // glyph
-    header.removeFromRight(86); // meters
+    mDetailsArea = area.removeFromBottom(16);
 
-    auto buttons = header.removeFromRight(232);
-    mClearButton.setBounds(buttons.removeFromRight(54).reduced(2, 8));
-    mLoadButton.setBounds(buttons.removeFromRight(74).reduced(2, 8));
-    mLibraryButton.setBounds(buttons.removeFromRight(84).reduced(2, 8));
-
-    mCaptureName.setBounds(header.removeFromTop(22));
-    mCaptureDetails.setBounds(header);
-
-    area.reduce(theme::metrics::gap, 0);
-    area.removeFromTop(theme::metrics::gap);
-
-    mKnobCells.clearQuick();
-
-    auto knobs = area.removeFromTop(84);
-    const auto layoutKnob = [this, &knobs](juce::Slider& slider, juce::Label& label, int width) {
-        auto cell = knobs.removeFromLeft(width);
-        mKnobCells.add(cell);
-        label.setBounds(cell.removeFromTop(13));
-        slider.setBounds(cell);
+    auto knobs = area.removeFromLeft(8 * theme::editor::cellWidth)
+                     .withSizeKeepingCentre(8 * theme::editor::cellWidth, theme::editor::cellHeight);
+    const auto layoutKnob = [&knobs](juce::Slider& slider, juce::Label& label) {
+        theme::editor::layoutKnobCell(knobs.removeFromLeft(theme::editor::cellWidth), slider, label);
     };
 
-    const int width = juce::jmax(56, juce::jmin(78, knobs.getWidth() / 8));
-    layoutKnob(mInTrim, mInTrimLabel, width);
-    layoutKnob(mBass, mBassLabel, width);
-    layoutKnob(mMid, mMidLabel, width);
-    layoutKnob(mTreble, mTrebleLabel, width);
-    layoutKnob(mOutTrim, mOutTrimLabel, width);
-    layoutKnob(mGateThreshold, mGateThresholdLabel, width);
-    layoutKnob(mCalDbu, mCalDbuLabel, width);
-    layoutKnob(mSlim, mSlimLabel, width);
+    layoutKnob(mInTrim, mInTrimLabel);
+    layoutKnob(mBass, mBassLabel);
+    layoutKnob(mMid, mMidLabel);
+    layoutKnob(mTreble, mTrebleLabel);
+    layoutKnob(mOutTrim, mOutTrimLabel);
+    layoutKnob(mGateThreshold, mGateThresholdLabel);
+    layoutKnob(mCalDbu, mCalDbuLabel);
+    layoutKnob(mSlim, mSlimLabel);
 
-    area.removeFromTop(6);
+    area.removeFromLeft(theme::metrics::gap);
+    mDividerX = static_cast<float>(area.getX());
+    area.removeFromLeft(theme::metrics::gap + 1);
 
-    auto switches = area.removeFromTop(26);
-    auto mode = switches.removeFromRight(180);
-    mOutputModeLabel.setBounds(mode.removeFromLeft(52));
-    mOutputMode.setBounds(mode.reduced(2, 1));
-
-    mEqOn.setBounds(switches.removeFromLeft(56));
-    mGateOn.setBounds(switches.removeFromLeft(66));
-    mStereo.setBounds(switches.removeFromLeft(104));
-    mCalibrateInput.setBounds(switches.removeFromLeft(124));
+    // The output-mode column keeps the mock's compact width however wide the
+    // docked editor stretches.
+    const auto columnWidth = juce::jmin(area.getWidth(), 200);
+    auto column = area.removeFromLeft(columnWidth).withSizeKeepingCentre(columnWidth, 96);
+    mOutputModeLabel.setBounds(column.removeFromTop(16));
+    mOutputMode.setBounds(column.removeFromTop(26).reduced(0, 1));
+    column.removeFromTop(4);
+    mCalibrateInput.setBounds(column.removeFromTop(20));
+    column.removeFromTop(6);
+    mInMeter = column.removeFromTop(10).toFloat();
+    column.removeFromTop(4);
+    mOutMeter = column.removeFromTop(10).toFloat();
 }
 
 } // namespace blockrig

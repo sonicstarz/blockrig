@@ -98,7 +98,7 @@ Tone3000Panel::Tone3000Panel()
             return;
         }
 
-        setStatus("Waiting for the browser sign-in…", false);
+        setStatus("Waiting for the browser sign-in...", false);
         mClient->signIn([this](bool success, juce::String error) {
             setStatus(success ? "Signed in." : error, !success);
             refreshAccountRow();
@@ -150,7 +150,7 @@ void Tone3000Panel::runSearch()
     if (query.isEmpty())
         return;
 
-    setStatus("Searching…", false);
+    setStatus("Searching...", false);
 
     mClient->search(query, [this](juce::Array<Tone3000Client::Tone> tones, juce::String error) {
         mTones = std::move(tones);
@@ -172,7 +172,7 @@ void Tone3000Panel::downloadRow(int row)
         return;
 
     const auto tone = mTones[row];
-    setStatus("Downloading \"" + tone.title + "\"…", false);
+    setStatus("Downloading \"" + tone.title + "\"...", false);
 
     mClient->downloadModel(tone, [this, tone](juce::File file, juce::String error) {
         if (error.isNotEmpty())

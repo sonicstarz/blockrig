@@ -124,7 +124,7 @@ void TunerPanel::paint(juce::Graphics& g)
     {
         g.setColour(theme::colours::textFaint);
         g.setFont(juce::FontOptions(17.0f));
-        g.drawText(mLevel > 1.0e-4f ? "Listening…" : "Play a note",
+        g.drawText(mLevel > 1.0e-4f ? "Listening..." : "Play a note",
                    noteArea, juce::Justification::centred, false);
     }
 
@@ -214,8 +214,8 @@ void TunerPanel::drawStrobe(juce::Graphics& g, juce::Rectangle<float> area)
 
     g.setColour(theme::colours::textFaint);
     g.setFont(juce::FontOptions(10.5f));
-    g.drawText(active ? (inTune ? "in tune" : (mSmoothedCents < 0 ? "flat — drifting left"
-                                                                  : "sharp — drifting right"))
+    g.drawText(active ? (inTune ? "in tune" : (mSmoothedCents < 0 ? juce::String::fromUTF8("flat — drifting left")
+                                                                  : juce::String::fromUTF8("sharp — drifting right")))
                       : "waiting for a note",
                area.removeFromBottom(16.0f), juce::Justification::centred, false);
 }

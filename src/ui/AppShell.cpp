@@ -100,7 +100,7 @@ public:
                 g.fillEllipse(status.getX(), status.getCentreY() - 3.5f, 7.0f, 7.0f);
                 g.setColour(theme::colours::textFaint);
                 g.setFont(theme::fonts::ui(13.0f));
-                g.drawText(" " + device->getName() + "  ·  " + juce::String(latencyMs, 1) + " ms",
+                g.drawText(" " + device->getName() + juce::String::fromUTF8("  ·  ") + juce::String(latencyMs, 1) + " ms",
                            status.withTrimmedLeft(10.0f), juce::Justification::centredLeft, true);
             }
             else
@@ -149,7 +149,7 @@ public:
         if (index < 0)
             return;
 
-        const auto& tile = mTiles[static_cast<size_t>(index)];
+        const auto tile = mTiles[static_cast<size_t>(index)]; // copy — see below
 
         if (event.mods.isPopupMenu() && tile.kind == Tile::rig)
         {
@@ -157,7 +157,15 @@ public:
             return;
         }
 
-        activate(tile);
+        // Opening a rig or setlist destroys the home screen — and this
+        // component, and the tile, with it — so the action runs on the next
+        // message-loop tick, outside the mouse-up, with its own copy of the
+        // tile. (This was a real crash: File::existsAsFile on freed memory.)
+        juce::MessageManager::callAsync(
+            [safe = juce::Component::SafePointer(this), tile] {
+                if (safe != nullptr)
+                    safe->activate(tile);
+            });
     }
 
 private:
@@ -584,7 +592,7 @@ void AppShell::showHome()
     repaint();
 }
 
-void AppShell::openRig(const juce::File& file)
+void AppShell::openRig(juce::File file)
 {
     mScreen = Screen::rig;
     mHome = nullptr;
@@ -604,7 +612,7 @@ void AppShell::openRig(const juce::File& file)
     resized();
 }
 
-void AppShell::openSetlist(const juce::File& setlistFile)
+void AppShell::openSetlist(juce::File setlistFile)
 {
     // Open the rig screen, hand it the setlist, then load the set's first rig.
     openRig({});
@@ -732,7 +740,7 @@ void AppShell::paint(juce::Graphics& g)
         g.setColour(theme::colours::textGhost);
 
         const auto caption = track.translated(0.0f, 12.0f).withHeight(18.0f);
-        g.drawText(total > 0 ? "Scanning plug-ins…  " + name : juce::String("Checking plug-ins…"),
+        g.drawText(total > 0 ? "Scanning plug-ins...  " + name : juce::String("Checking plug-ins..."),
                    caption.withTrimmedRight(90.0f), juce::Justification::centredLeft, true);
 
         if (total > 0)

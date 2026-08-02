@@ -5,15 +5,15 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "blocks/nam/NamBlockProcessor.h"
+#include "ui/Theme.h"
 
 namespace blockrig
 {
 
-/// Inline editor for the built-in NAM block.
-///
-/// Built-ins edit here rather than in a floating window: it is the showcase
-/// surface of the app, and it follows the GENOME / Neural DSP pattern of a chain
-/// strip above and the selected block's controls below.
+/// Editor for the built-in NAM block (4c): Library / Open... / Clear and the
+/// EQ / Gate / Stereo switches live in the window's title bar next to the
+/// capture filename; the body is the amber knob row plus the output-mode
+/// column, with the capture's metadata as a faint ribbon along the bottom.
 class NamBlockPanel final : public juce::Component
                           , public juce::FileDragAndDropTarget
                           , private juce::Timer
@@ -30,6 +30,14 @@ public:
     void fileDragEnter(const juce::StringArray&, int, int) override;
     void fileDragExit(const juce::StringArray&) override;
 
+    juce::Component* getTitleBarRow() { return &mTitleBarRow; }
+    int getTitleBarRowWidth() const { return mTitleBarRow.getPreferredWidth(); }
+    juce::String getSubtitle() const { return mSubtitle; }
+    std::function<void(const juce::String&)> onSubtitleChanged;
+
+    static constexpr int kPreferredWidth = 944;
+    static constexpr int kPreferredHeight = 152;
+
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -41,22 +49,22 @@ private:
     void addKnob(juce::Slider&, juce::Label&, const juce::String& caption, const char* paramId,
                  std::unique_ptr<SliderAttachment>&);
     void showLibraryMenu();
+    void setSubtitle(const juce::String& subtitle);
 
     NamBlockProcessor& mProcessor;
 
-    juce::Label mCaptureName, mCaptureDetails;
-    /// The library is the primary way to pick a capture once it has content;
-    /// the file chooser feeds it.
+    theme::TitleBarRow mTitleBarRow;
     juce::TextButton mLibraryButton{"Library"};
     juce::TextButton mLoadButton{"Open..."};
     juce::TextButton mClearButton{"Clear"};
+    juce::String mSubtitle;
 
     juce::Slider mInTrim, mBass, mMid, mTreble, mOutTrim, mCalDbu, mSlim, mGateThreshold;
     juce::Label mInTrimLabel, mBassLabel, mMidLabel, mTrebleLabel, mOutTrimLabel, mCalDbuLabel, mSlimLabel,
         mGateThresholdLabel;
 
     juce::ToggleButton mEqOn{"EQ"}, mGateOn{"Gate"}, mCalibrateInput{"Calibrate input"},
-        mStereo{"True stereo"};
+        mStereo{"Stereo"};
     juce::ComboBox mOutputMode;
     juce::Label mOutputModeLabel;
 
@@ -66,8 +74,15 @@ private:
     std::unique_ptr<ComboAttachment> mOutputModeAtt;
 
     std::unique_ptr<juce::FileChooser> mFileChooser;
-    /// Laid out in resized(), drawn in paint() as the grid's dividers.
-    juce::Array<juce::Rectangle<int>> mKnobCells;
+
+    /// The capture's metadata (sample rate, loudness, calibration levels),
+    /// drawn as a faint mono ribbon along the bottom of the body.
+    juce::String mDetails;
+
+    juce::Rectangle<float> mInMeter, mOutMeter;
+    juce::Rectangle<int> mDetailsArea;
+    float mDividerX = 0.0f;
+
     bool mDragHighlight = false;
     float mInputLevel = 0.0f, mOutputLevel = 0.0f;
 

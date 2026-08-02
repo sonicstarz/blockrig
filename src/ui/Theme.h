@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -88,6 +90,33 @@ juce::Font ui(float size, int weight = 400);
 juce::Font mono(float size, int weight = 400);
 } // namespace fonts
 
+namespace editor
+{
+/// Shared metrics for the built-in block editors, so every panel's knob row
+/// reads as the same component (4c/4f/4g: 76 px knob, mono value beneath,
+/// sentence-case caption beneath that).
+inline constexpr int knobSize = 76;
+inline constexpr int valueHeight = 18;
+inline constexpr int captionHeight = 16;
+inline constexpr int cellWidth = 88;
+inline constexpr int cellHeight = knobSize + valueHeight + captionHeight;
+
+/// The soft-glass knob: 270° sweep with the gap at the bottom, category-
+/// coloured arc, value textbox below (the Look gives it the mono face).
+void styleKnob(juce::Slider&, juce::Colour category);
+
+/// Caption under a knob. Sentence case in the UI face — the all-caps
+/// letterspaced-mono treatment was rejected in design review; mono stays
+/// reserved for numerals.
+void styleCaption(juce::Label&, const juce::String& text);
+
+/// One knob cell: knob + value on top, caption underneath.
+void layoutKnobCell(juce::Rectangle<int> cell, juce::Slider&, juce::Label& caption);
+
+/// Inset well behind graphs and waveforms (4f/4g).
+void paintWell(juce::Graphics&, juce::Rectangle<float> bounds);
+} // namespace editor
+
 /// The mark: a 2×2 grid of rounded squares, three outlined, the bottom-right
 /// solid amber. Reads from 12 px in a header to 72 px on the boot screen.
 void drawLogoMark(juce::Graphics& g, juce::Rectangle<float> bounds);
@@ -140,6 +169,34 @@ public:
     juce::Font getAlertWindowTitleFont() override;
     juce::Font getAlertWindowMessageFont() override;
     juce::Font getAlertWindowFont() override;
+};
+
+/// A row of small controls a panel lends to its BlockWindow's title bar — the
+/// design puts Library/Open..., header toggles, and the EQ band chips in the
+/// category strip itself (4c/4f/4g), not in the panel body.
+///
+/// The panel owns the row (and the controls in it); the window only positions
+/// it. Fixed-width items, laid out left to right with a small gap.
+class TitleBarRow final : public juce::Component
+{
+public:
+    void add(juce::Component& item, int width);
+    void addGap(int width);
+
+    int getPreferredWidth() const { return mPreferredWidth; }
+    void resized() override;
+
+private:
+    struct Item
+    {
+        juce::Component* component; ///< null for a plain gap
+        int width;
+    };
+
+    std::vector<Item> mItems;
+    int mPreferredWidth = 0;
+
+    static constexpr int kGap = 6;
 };
 
 /// Range a meter displays. Guitar sits around -30 to -12 dBFS, which on a linear

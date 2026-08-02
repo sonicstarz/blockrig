@@ -39,7 +39,7 @@ TransportBar::TransportBar(BlockRigProcessor& processor)
         const auto taps = mProcessor.getTransport().tap();
         // Show that the tap registered even before there are enough for a tempo:
         // a button that does nothing visible for the first press reads as broken.
-        mTapButton.setButtonText(taps < 2 ? "TAP…" : "TAP");
+        mTapButton.setButtonText(taps < 2 ? "TAP..." : "TAP");
         mTapFlashCountdown = 8;
         mShownBpm = 0.0;
         refresh();

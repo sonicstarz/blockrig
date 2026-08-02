@@ -30,11 +30,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout EqBlockProcessor::createLayo
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"hp_freq", 1}, "High-pass", frequencyRange(20.0f, 1000.0f), 80.0f));
 
+    // The shelves and bells carry on-switches too (the editor's "Band on"),
+    // defaulting to on so states saved before they existed keep their sound.
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"ls_on", 1},
+                                                          "Low shelf on", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"ls_freq", 1}, "Low shelf", frequencyRange(40.0f, 600.0f), 120.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"ls_gain", 1},
                                                            "Low shelf gain", gainRange, 0.0f));
 
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"b1_on", 1},
+                                                          "Bell 1 on", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"b1_freq", 1}, "Bell 1", frequencyRange(80.0f, 4000.0f), 500.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"b1_gain", 1},
@@ -42,6 +48,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout EqBlockProcessor::createLayo
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"b1_q", 1}, "Bell 1 Q",
                                                            qRange, 1.0f));
 
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"b2_on", 1},
+                                                          "Bell 2 on", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"b2_freq", 1}, "Bell 2", frequencyRange(400.0f, 12000.0f), 2500.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"b2_gain", 1},
@@ -49,6 +57,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout EqBlockProcessor::createLayo
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"b2_q", 1}, "Bell 2 Q",
                                                            qRange, 1.0f));
 
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"hs_on", 1},
+                                                          "High shelf on", true));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{"hs_freq", 1}, "High shelf", frequencyRange(1500.0f, 16000.0f), 6000.0f));
     layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"hs_gain", 1},
@@ -152,6 +162,10 @@ void EqBlockProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     updateCoefficients();
 
     const bool highPassOn = boolValue("hp_on");
+    const bool lowShelfOn = boolValue("ls_on");
+    const bool bell1On = boolValue("b1_on");
+    const bool bell2On = boolValue("b2_on");
+    const bool highShelfOn = boolValue("hs_on");
     const bool lowPassOn = boolValue("lp_on");
 
     for (int channelIndex = 0; channelIndex < numChannels; ++channelIndex)
@@ -165,12 +179,14 @@ void EqBlockProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
 
             if (highPassOn)
                 sample = channel.highPass.processSample(sample);
-
-            sample = channel.lowShelf.processSample(sample);
-            sample = channel.bell1.processSample(sample);
-            sample = channel.bell2.processSample(sample);
-            sample = channel.highShelf.processSample(sample);
-
+            if (lowShelfOn)
+                sample = channel.lowShelf.processSample(sample);
+            if (bell1On)
+                sample = channel.bell1.processSample(sample);
+            if (bell2On)
+                sample = channel.bell2.processSample(sample);
+            if (highShelfOn)
+                sample = channel.highShelf.processSample(sample);
             if (lowPassOn)
                 sample = channel.lowPass.processSample(sample);
 

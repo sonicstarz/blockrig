@@ -472,7 +472,10 @@ void SnapshotStrip::paint(juce::Graphics& g)
     {
         g.setColour(theme::colours::textGhost);
         g.setFont(theme::fonts::ui(12.5f));
-        g.drawText("none yet — press  +  to save the current settings as a scene",
+        // fromUTF8: a bare char* literal is read as Latin-1, turning the dash
+        // into mojibake.
+        g.drawText(juce::String::fromUTF8("none yet \xe2\x80\x94 press  +  to save the current "
+                                          "settings as a scene"),
                    getLocalBounds().withTrimmedLeft(120), juce::Justification::centredLeft, false);
     }
 }

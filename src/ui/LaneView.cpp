@@ -29,7 +29,7 @@ BlockTile::BlockTile(juce::String uid, juce::String name, juce::String subtitle)
     , mName(std::move(name))
     , mSubtitle(std::move(subtitle))
 {
-    setTooltip(mName + (mSubtitle.isNotEmpty() ? " — " + mSubtitle : juce::String()));
+    setTooltip(mName + (mSubtitle.isNotEmpty() ? juce::String::fromUTF8(" — ") + mSubtitle : juce::String()));
 }
 
 void BlockTile::setSelected(bool shouldBeSelected)
