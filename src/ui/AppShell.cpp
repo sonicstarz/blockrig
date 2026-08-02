@@ -1,5 +1,7 @@
 #include "ui/AppShell.h"
 
+#include <algorithm>
+
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "state/RigFiles.h"
@@ -193,13 +195,23 @@ private:
         float y = 96.0f;
 
         const auto lay = [&](Tile::Kind kind, const char* label, float width, float height) {
+            const auto belongs = [kind](const Tile& tile) {
+                return tile.kind == kind || (kind == Tile::rig && tile.kind == Tile::newRig);
+            };
+
+            // An empty shelf keeps neither its label nor its row: with no
+            // setlists saved, the old layout left a screen-high hole between
+            // Rigs and Tools.
+            if (std::none_of(mTiles.begin(), mTiles.end(), belongs))
+                return;
+
             mShelfLabels.push_back(
                 {label, juce::Rectangle<int>(static_cast<int>(left), static_cast<int>(y) - 28, 300, 22)});
             float x = left;
 
             for (auto& tile : mTiles)
             {
-                if (tile.kind != kind && !(kind == Tile::rig && tile.kind == Tile::newRig))
+                if (!belongs(tile))
                     continue;
 
                 tile.bounds = {x, y, width, height};

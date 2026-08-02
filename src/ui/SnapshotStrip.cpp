@@ -593,25 +593,28 @@ void SnapshotStrip::paint(juce::Graphics& g)
 
 void SnapshotStrip::resized()
 {
-    auto area = getLocalBounds().reduced(theme::metrics::padding, 5);
-    area.removeFromLeft(66); // the SNAPSHOTS caption
+    auto area = getLocalBounds().reduced(theme::metrics::padding, 6);
+    area.removeFromLeft(78); // the "Scenes" caption
 
-    mEditToggle.setBounds(area.removeFromRight(56).reduced(0, 2));
-    area.removeFromRight(6);
+    mEditToggle.setBounds(area.removeFromRight(64).reduced(0, 3));
+    area.removeFromRight(8);
 
-    mAddButton.setBounds(area.removeFromLeft(30).reduced(0, 2));
-    area.removeFromLeft(6);
+    mAddButton.setBounds(area.removeFromLeft(38).reduced(0, 3));
+    area.removeFromLeft(8);
 
-    // Pads share the row equally, like the design's flex:1.
+    // Pads share the row equally — 4c's flex:1 — so the scene row spans the
+    // window instead of trailing off into empty space on the right.
     if (!mChips.empty())
     {
-        const auto pad = juce::jmax(88, (area.getWidth() - 6 * static_cast<int>(mChips.size()))
-                                            / static_cast<int>(mChips.size()));
+        const auto count = static_cast<int>(mChips.size());
+        const auto gaps = 8 * (count - 1);
+        const auto pad = juce::jmax(96, (area.getWidth() - gaps) / count);
 
-        for (auto& chip : mChips)
+        for (int i = 0; i < count; ++i)
         {
-            chip->setBounds(area.removeFromLeft(juce::jmin(pad, 220)));
-            area.removeFromLeft(6);
+            mChips[static_cast<size_t>(i)]->setBounds(
+                i == count - 1 ? area : area.removeFromLeft(pad));
+            area.removeFromLeft(8);
         }
     }
 }

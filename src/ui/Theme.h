@@ -66,12 +66,14 @@ inline constexpr float smallCornerRadius = radiusSm;
 inline constexpr int gap = 12;
 inline constexpr int padding = 18;
 
-inline constexpr int headerHeight = 60;
+/// The header is the one bar that is always on screen, so it carries the
+/// rig's identity at a size you can read while standing up.
+inline constexpr int headerHeight = 88;
 inline constexpr int footerHeight = 40;
 
 /// Blocks are 64 px chips with the name beneath, per the chain spec.
-inline constexpr int blockSquare = 64;
-inline constexpr int blockLabelHeight = 30;
+inline constexpr int blockSquare = 72;
+inline constexpr int blockLabelHeight = 32;
 inline constexpr int blockWidth = blockSquare;
 inline constexpr int blockHeight = blockSquare + blockLabelHeight;
 inline constexpr int endBlockWidth = 64;

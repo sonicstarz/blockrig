@@ -1294,7 +1294,14 @@ void MainView::refreshHeader()
                                                          : (mDeviceManager != nullptr ? juce::String("No rig")
                                                                                       : juce::String("DAW session"));
     mRigName.set(rigName, mDirty);
-    mSaveButton.setEnabled(mDirty || mCurrentRigFile == juce::File{});
+
+    // Save sits beside the name and goes amber the moment there is something to
+    // save, so "have I saved?" is answered by the same glance that reads the
+    // rig's name.
+    const bool needsSaving = mDirty || mCurrentRigFile == juce::File{};
+    mSaveButton.setEnabled(needsSaving);
+    mSaveButton.getProperties().set("primary", needsSaving);
+    mSaveButton.repaint();
 }
 
 void MainView::RigNameButton::paint(juce::Graphics& g)
@@ -1306,19 +1313,29 @@ void MainView::RigNameButton::paint(juce::Graphics& g)
     g.setColour(theme::colours::outline);
     g.drawRoundedRectangle(bounds.reduced(0.0f, 2.0f), theme::metrics::radiusMd, 1.0f);
 
+    // The rig's name is the header's headline: the one thing you check between
+    // songs, so it gets the largest type in the bar, with its saved state on a
+    // second line rather than as a dot you have to know how to read.
+    auto text = bounds.reduced(10.0f, 4.0f);
+    auto state = text.removeFromBottom(15.0f);
+
     g.setColour(theme::colours::text);
-    g.setFont(theme::fonts::ui(14.0f, 700));
+    g.setFont(theme::fonts::ui(21.0f, 700));
 
     const auto textWidth = juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), mName);
-    g.drawText(mName, bounds, juce::Justification::centred, true);
+    g.drawText(mName, text, juce::Justification::centred, true);
 
     // Unsaved: the amber dot after the name, per the design.
     if (mDirty)
     {
         g.setColour(theme::colours::accent);
-        g.fillEllipse(bounds.getCentreX() + textWidth * 0.5f + 7.0f, bounds.getCentreY() - 2.5f, 5.0f,
-                      5.0f);
+        g.fillEllipse(text.getCentreX() + textWidth * 0.5f + 9.0f, text.getCentreY() - 3.5f, 7.0f,
+                      7.0f);
     }
+
+    g.setColour(mDirty ? theme::colours::accent : theme::colours::textGhost);
+    g.setFont(theme::fonts::ui(11.0f, 500));
+    g.drawText(mDirty ? "Unsaved changes" : "Saved", state, juce::Justification::centred, false);
 }
 
 void MainView::startScan()
@@ -1982,37 +1999,59 @@ void MainView::resized()
 
     auto header = area.removeFromTop(theme::metrics::headerHeight).reduced(theme::metrics::padding, 0);
 
-    // 4c order: mark · preset pill · BPM cluster ... meters · Tuner · Gig · ⋯
-    mTitle.setBounds(header.removeFromLeft(34).withSizeKeepingCentre(34, 30));
-    header.removeFromLeft(theme::metrics::gap);
-
-    auto pill = header.removeFromLeft(250).withSizeKeepingCentre(250, 32);
-    mPrevRig.setBounds(pill.removeFromLeft(30));
-    mNextRig.setBounds(pill.removeFromRight(30));
-    mRigName.setBounds(pill.reduced(2, 0));
-
-    header.removeFromLeft(theme::metrics::gap);
-    mTransportBar.setBounds(header.removeFromLeft(216).withSizeKeepingCentre(216, 40));
-    header.removeFromLeft(theme::metrics::gap);
-    mMuteButton.setBounds(header.removeFromLeft(64).withSizeKeepingCentre(64, 28));
-
-    // Right: watch, tune, save, configure.
     if (mGigView != nullptr)
         mGigView->setBounds(getLocalBounds());
 
     if (mTuner != nullptr)
         mTuner->setBounds(getLocalBounds());
 
-    mSettingsButton.setBounds(header.removeFromRight(80).withSizeKeepingCentre(80, 28));
+    // The header reads in three groups: what the rig sounds like (left), which
+    // rig it is (centre, because that is the question you ask most), and what
+    // you do with it (right).
+    constexpr int kControlHeight = 40;
+    const auto centreRow = [](juce::Rectangle<int> slot, int width) {
+        return slot.withSizeKeepingCentre(width, kControlHeight);
+    };
+
+    // --- Left: home, then the tempo cluster and the mute it lives next to.
+    mTitle.setBounds(header.removeFromLeft(40).withSizeKeepingCentre(40, 36));
+    header.removeFromLeft(theme::metrics::gap);
+    mTransportBar.setBounds(centreRow(header.removeFromLeft(250), 250));
+    header.removeFromLeft(theme::metrics::gap);
+    mMuteButton.setBounds(centreRow(header.removeFromLeft(78), 78));
+
+    // --- Right: watch the levels, tune, perform, configure.
+    mSettingsButton.setBounds(centreRow(header.removeFromRight(48), 48));
     header.removeFromRight(theme::metrics::gap);
-    mGigButton.setBounds(header.removeFromRight(48).withSizeKeepingCentre(48, 28));
+    mGigButton.setBounds(centreRow(header.removeFromRight(72), 72));
     header.removeFromRight(theme::metrics::gap);
-    mSaveButton.setBounds(header.removeFromRight(58).withSizeKeepingCentre(58, 28));
+    mTunerButton.setBounds(centreRow(header.removeFromRight(84), 84));
+    header.removeFromRight(theme::metrics::gap + 4);
+    mHeaderMeters.setBounds(header.removeFromRight(190).withSizeKeepingCentre(190, 52));
     header.removeFromRight(theme::metrics::gap);
-    mTunerButton.setBounds(header.removeFromRight(64).withSizeKeepingCentre(64, 28));
-    header.removeFromRight(theme::metrics::gap);
-    mHeaderMeters.setBounds(header.removeFromRight(176).withSizeKeepingCentre(176, 46));
-    header.removeFromRight(theme::metrics::gap);
+
+    // --- Centre: ‹ rig › and Save, centred in the window rather than in
+    // whatever gap the side groups happen to leave, so the name does not drift
+    // as the buttons around it change width.
+    constexpr int kArrow = 38;
+    constexpr int kSaveWidth = 84;
+    constexpr int kIdealName = 300;
+    constexpr int kFixed = kArrow * 2 + kSaveWidth + 18; // arrows, Save, gaps
+
+    // Centre on the window, then clamp into whatever the side groups left, so a
+    // narrow window shortens the name rather than overlapping the buttons.
+    const auto pillWidth = juce::jmin(header.getWidth(), kFixed + kIdealName);
+    auto pill = header.withSizeKeepingCentre(pillWidth, kControlHeight)
+                    .withX(juce::jlimit(header.getX(), header.getRight() - pillWidth,
+                                        getWidth() / 2 - pillWidth / 2));
+
+    mPrevRig.setBounds(pill.removeFromLeft(kArrow));
+    pill.removeFromLeft(4);
+    mSaveButton.setBounds(pill.removeFromRight(kSaveWidth));
+    pill.removeFromRight(10);
+    mNextRig.setBounds(pill.removeFromRight(kArrow));
+    pill.removeFromRight(4);
+    mRigName.setBounds(pill);
 
 
     mSnapshots.setBounds(area.removeFromTop(SnapshotStrip::kHeight));

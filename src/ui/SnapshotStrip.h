@@ -29,7 +29,7 @@ public:
 
     void refresh();
 
-    static constexpr int kHeight = 40;
+    static constexpr int kHeight = 56;
 
     /// MainView owns window creation; the strip only asks.
     std::function<void(std::unique_ptr<juce::Component> panel, juce::String title, int width, int height)>

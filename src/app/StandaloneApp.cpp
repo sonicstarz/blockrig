@@ -954,6 +954,21 @@ private:
         MainWindow(const juce::String& name, BlockRigProcessor& processor, juce::AudioDeviceManager& deviceManager)
             : juce::DocumentWindow(name, juce::Colour(0xff101216), juce::DocumentWindow::allButtons)
         {
+            // This is a stage instrument: everything wants to be readable at
+            // arm's length on a laptop, not at desk-and-mouse density. Scaling
+            // the desktop rather than every token keeps the design's own
+            // proportions intact, and shrinks on small screens rather than
+            // opening a window that will not fit.
+            {
+                const auto work = juce::Desktop::getInstance()
+                                      .getDisplays()
+                                      .getPrimaryDisplay()
+                                      ->userArea;
+                const auto fits = juce::jmin(static_cast<float>(work.getWidth()) / 1500.0f,
+                                             static_cast<float>(work.getHeight()) / 940.0f);
+                juce::Desktop::getInstance().setGlobalScaleFactor(juce::jlimit(1.0f, 1.3f, fits));
+            }
+
             setUsingNativeTitleBar(true);
             setContentOwned(new AppShell(processor, &deviceManager), true);
             setResizable(true, false);
