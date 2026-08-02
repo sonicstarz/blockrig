@@ -70,7 +70,8 @@ private:
     juce::TextButton mTapButton{"TAP"};
     /// Click on/off. A level control would need a popover for something people
     /// set once; the level lives in the transport and defaults sensibly.
-    juce::TextButton mMetronome{"♩"};
+    /// fromUTF8, or the quarter note is read as Latin-1 and renders as "â™©".
+    juce::TextButton mMetronome{juce::String::fromUTF8("\xe2\x99\xa9")};
     juce::ComboBox mTimeSignature;
 
     bool mWasFollowingHost = false;

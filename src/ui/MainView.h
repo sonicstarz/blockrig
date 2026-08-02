@@ -13,6 +13,7 @@
 #include "ui/LaneView.h"
 #include "state/Setlist.h"
 #include "ui/GigView.h"
+#include "ui/TunerPanel.h"
 #include "ui/SnapshotStrip.h"
 #include "ui/BlockWindow.h"
 #include "ui/Theme.h"
@@ -101,6 +102,9 @@ private:
     bool mHasSetlist = false;
 
     std::unique_ptr<GigView> mGigView;
+
+    /// The tuner covers the whole view rather than living in a window (4i).
+    std::unique_ptr<TunerPanel> mTuner;
     juce::TextButton mPrevRig{"<"}, mNextRig{">"};
 
     /// Centre of the header: the rig's name, asterisked while there are unsaved

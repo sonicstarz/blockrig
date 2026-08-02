@@ -369,6 +369,7 @@ private:
     {
         auto window = std::make_shared<juce::AlertWindow>("New rig", "", juce::MessageBoxIconType::NoIcon,
                                                           this);
+        window->setAlwaysOnTop(true);
         window->addTextEditor("name", "My rig");
         window->addButton("Create", 1, juce::KeyPress(juce::KeyPress::returnKey));
         window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
@@ -412,6 +413,7 @@ private:
             {
                 auto window = std::make_shared<juce::AlertWindow>("Rename rig", "",
                                                                   juce::MessageBoxIconType::NoIcon, this);
+                window->setAlwaysOnTop(true);
                 window->addTextEditor("name", file.getFileNameWithoutExtension());
                 window->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
                 window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));

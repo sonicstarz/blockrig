@@ -695,6 +695,7 @@ void LaneView::saveFavorite(const juce::String& uid)
 
     auto window = std::make_shared<juce::AlertWindow>("Save as favourite", "",
                                                       juce::MessageBoxIconType::NoIcon, this);
+    window->setAlwaysOnTop(true);
     window->addTextEditor("name", block->getDisplayName());
     window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));

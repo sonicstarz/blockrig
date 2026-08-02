@@ -504,6 +504,7 @@ void SnapshotStrip::showChipMenu(int index)
         {
             auto window = std::make_shared<juce::AlertWindow>(
                 "Rename snapshot", "", juce::MessageBoxIconType::NoIcon, this);
+            window->setAlwaysOnTop(true);
             window->addTextEditor("name", bank.getSnapshots()[static_cast<size_t>(index)].name);
             window->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
             window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));

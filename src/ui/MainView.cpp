@@ -718,7 +718,7 @@ MainView::MainView(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     addAndMakeVisible(mSettingsButton);
 
     mTunerButton.setTooltip("Tune up. Silences the rig while open; closing brings the sound back.");
-    mTunerButton.onClick = [this] { showTuner(findWindowForBlock("tuner") == nullptr); };
+    mTunerButton.onClick = [this] { showTuner(mTuner == nullptr); };
     addAndMakeVisible(mTunerButton);
 
     mRigName.onClick = [this] { showRigMenu(); };
@@ -1251,7 +1251,7 @@ void MainView::timerCallback()
         mSnapshots.refresh();
     }
 
-    const bool tunerOpen = findWindowForBlock("tuner") != nullptr;
+    const bool tunerOpen = mTuner != nullptr;
     if (mProcessor.isTunerActive() != tunerOpen)
         showTuner(mProcessor.isTunerActive());
 
@@ -1364,22 +1364,23 @@ void MainView::rigWasRestored()
 
 void MainView::showTuner(bool shouldBeOpen)
 {
-    auto* existing = findWindowForBlock("tuner");
-
-    if (shouldBeOpen == (existing != nullptr))
+    if (shouldBeOpen == (mTuner != nullptr))
         return;
 
     if (!shouldBeOpen)
     {
-        closeWindow(existing);
+        // Destroying it clears the processor's tuner flag, unmuting the rig.
+        mTuner = nullptr;
         return;
     }
 
-    auto panel = std::make_unique<TunerPanel>(mProcessor);
-    openUtilityWindow("Tuner", BlockCategory::utility, std::move(panel));
-    mWindows.back()->blockUid = "tuner";
-    mWindows.back()->setSize(TunerPanel::kPreferredWidth,
-                             TunerPanel::kPreferredHeight + BlockWindow::kTitleBarHeight);
+    // 4i is full-screen: tuning is what you do instead of everything else, and
+    // at stage distance the note has to be enormous.
+    mTuner = std::make_unique<TunerPanel>(mProcessor);
+    mTuner->onClose = [this] { showTuner(false); };
+    addAndMakeVisible(*mTuner);
+    mTuner->setBounds(getLocalBounds());
+    mTuner->toFront(true);
 }
 
 juce::File MainView::getRigsFolder()
@@ -1457,6 +1458,7 @@ void MainView::showSetlistMenu()
         {
             auto window = std::make_shared<juce::AlertWindow>("New setlist", "",
                                                               juce::MessageBoxIconType::NoIcon, this);
+            window->setAlwaysOnTop(true);
             window->addTextEditor("name", "Set 1");
             window->addButton("Create", 1, juce::KeyPress(juce::KeyPress::returnKey));
             window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
@@ -1503,6 +1505,17 @@ void MainView::enterGigView()
     closeAllWindows();
 
     mGigView = std::make_unique<GigView>(mProcessor);
+
+    // Songs are rigs, sections are that rig's scenes: hand the gig view where
+    // this rig sits in the set so the header can say so.
+    if (mHasSetlist)
+    {
+        mGigView->setlistName = mSetlist.name;
+        mGigView->setlistCount = listRigs().size();
+        mGigView->setlistIndex = listRigs().indexOf(mCurrentRigFile) + 1;
+    }
+
+    mGigView->onToggleTuner = [this] { showTuner(mTuner == nullptr); };
     mGigView->rigName = mCurrentRigFile != juce::File{}
                             ? mCurrentRigFile.getFileNameWithoutExtension()
                             : juce::String("No rig");
@@ -1656,6 +1669,7 @@ void MainView::showRigMenu()
             {
                 auto window = std::make_shared<juce::AlertWindow>("Rename rig", "",
                                                                   juce::MessageBoxIconType::NoIcon, this);
+                window->setAlwaysOnTop(true);
                 window->addTextEditor("name", mCurrentRigFile.getFileNameWithoutExtension());
                 window->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
                 window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
@@ -1985,6 +1999,9 @@ void MainView::resized()
     // Right: watch, tune, save, configure.
     if (mGigView != nullptr)
         mGigView->setBounds(getLocalBounds());
+
+    if (mTuner != nullptr)
+        mTuner->setBounds(getLocalBounds());
 
     mSettingsButton.setBounds(header.removeFromRight(80).withSizeKeepingCentre(80, 28));
     header.removeFromRight(theme::metrics::gap);

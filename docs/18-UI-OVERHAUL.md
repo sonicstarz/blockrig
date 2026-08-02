@@ -61,9 +61,24 @@ numerics (BPM, dB, Hz, ms, CPU %).
   4h: save-scene dialog rebuilt (Name field 16/600, "Saved in this scene" 44px
   checklist rows with raised fill + 18px amber checkboxes + category dots,
   Cancel + primary Save scene, Pin hidden via BlockWindow::setPinnable).
-- **S6 Tuner + Gig**: 4i full-screen tuner (segmented Needle/Strobe, ±5¢ green
-  zone, string pads E A D G B e, reference dropdown), 4j gig mode (setlist column
-  maps songs→rigs, sections→scenes; scene pad grid with category dots).
+- **S6 Tuner + Gig** — **DONE (2026-08-02, verified in the running app)**: 4i
+  tuner is now a full-bleed overlay owned by MainView (`mTuner`) rather than a
+  BlockWindow — the mock is full-screen, and a window's own chrome fought the
+  segmented control. Radial backdrop, Needle/Strobe segmented pill, reference
+  dropdown, drawn ✕; note 120px with halo + mono octave + "cents · Hz" readout
+  in the note's colour; cents scale 480px with the ±5¢ green zone, 11 ticks and
+  quarter-point labels; string pads E A D G B e that light green for the
+  detected string; "Output muted while tuning". 4j gig view rebuilt: header
+  ("Gig mode" badge, setlist position, BPM, Tuner, Exit), 320px setlist column
+  (song = rig, sections = that rig's scenes — done ✓ / current ▶ amber /
+  upcoming, tapping a section recalls it, Prev/Next song step the set), and the
+  4-across scene pad grid (letter, "· active", name, category dots of the blocks
+  each scene saved) plus a dashed "+" pad. Gig's Tuner button opens the same 4i
+  overlay instead of the old bespoke in-gig readout.
+  Fixed along the way: modal AlertWindows (New rig, Rename, New setlist, Save as
+  favourite, snapshot rename) could sit *behind* the main window and silently
+  swallow every click — they are `setAlwaysOnTop(true)` now; and the metronome's
+  ♩ lived in a header, which the earlier mojibake sweep (cpp-only) missed.
 
 ## Approximations (per README's own allowance)
 - Backdrop blur → layered translucent fills.
