@@ -9,6 +9,7 @@
 
 #include "BlockRigProcessor.h"
 #include "ui/MainView.h"
+#include "ui/Theme.h"
 
 namespace blockrig
 {
@@ -56,6 +57,11 @@ private:
 
     BlockRigProcessor& mProcessor;
     juce::AudioDeviceManager* mDeviceManager;
+
+    /// Installed as the application default, so popup menus without a target
+    /// component (the block context menu) and other desktop windows get the
+    /// design language too — MainView's own Look only reaches its children.
+    theme::Look mLook;
 
     Screen mScreen = Screen::boot;
 

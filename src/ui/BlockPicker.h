@@ -12,12 +12,13 @@ namespace blockrig
 {
 class PluginCatalog;
 
-/// Chooses what to put in a lane slot.
+/// Chooses what to put in a lane slot (4d).
 ///
 /// With ~860 plug-ins installed on a typical machine, a nested category menu is
-/// a chore — so search is the primary path and the list is filtered as you type.
-/// Built-in blocks and recently used plug-ins are pinned above everything else,
-/// because those are what people actually reach for.
+/// a chore — so search is the primary path, a category chip row narrows by
+/// kind, and the list filters as you type. Built-in blocks, starred favourites,
+/// and recently used plug-ins are pinned above everything else, because those
+/// are what people actually reach for.
 class BlockPicker final : public juce::Component
                         , private juce::TextEditor::Listener
                         , private juce::ListBoxModel
@@ -47,6 +48,38 @@ private:
         BlockCategory category = BlockCategory::other;
     };
 
+    /// "All" plus one chip per category, coloured to the category system.
+    /// Wraps onto a second line when the labels outgrow the popover.
+    class ChipRow final : public juce::Component
+    {
+    public:
+        std::function<void()> onChanged;
+
+        /// -1 = All.
+        int getSelected() const { return mSelected; }
+
+        int getPreferredHeight(int width);
+        void paint(juce::Graphics&) override;
+        void mouseDown(const juce::MouseEvent&) override;
+        void mouseMove(const juce::MouseEvent&) override;
+        void mouseExit(const juce::MouseEvent&) override;
+
+    private:
+        struct Chip
+        {
+            int category; ///< index into getAllCategories(), -1 = All
+            juce::String label;
+            juce::Rectangle<float> bounds;
+        };
+
+        void layoutChips(int width);
+
+        std::vector<Chip> mChips;
+        int mSelected = -1;
+        int mHover = -1;
+        int mLayoutWidth = 0;
+    };
+
     void rebuildEntries();
 
     // TextEditor::Listener
@@ -66,12 +99,21 @@ private:
     /// Remembers the last few choices across pickers within a session.
     static juce::Array<juce::PluginDescription>& getRecents();
 
+    /// Starred blocks persist across sessions: one plug-in identifier per line
+    /// in …/BlockRig/starred-blocks.txt, next to the favourites folder.
+    static juce::StringArray& getStars();
+    static juce::File getStarsFile();
+    static bool isStarred(const juce::PluginDescription&);
+    static void toggleStar(const juce::PluginDescription&);
+
     PluginCatalog& mCatalog;
     juce::TextEditor mSearch;
+    ChipRow mChips;
     juce::ListBox mList{"blocks", this};
-    juce::Label mHint;
 
     std::vector<Entry> mEntries;
+    int mTotalBlocks = 0;
+    juce::String mFooterLeft;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BlockPicker)
 };

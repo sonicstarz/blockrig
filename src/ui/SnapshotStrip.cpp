@@ -1,5 +1,6 @@
 #include "ui/SnapshotStrip.h"
 
+#include "ui/BlockCategories.h"
 #include "ui/BlockWindow.h"
 #include "ui/Theme.h"
 
@@ -107,41 +108,118 @@ private:
 };
 
 //==============================================================================
-/// The "new snapshot" panel: a name, and exactly what this snapshot saves.
+/// The save-scene dialog (4h): a name, and exactly what this scene saves.
 ///
-/// The safes list defaults to everything a snapshot CAN hold - every block's
+/// The checklist defaults to everything a scene CAN hold - every block's
 /// parameters (for the NAM that includes the loaded capture), the tempo, and
 /// the tuner. What it can never hold is the rig's structure: adding, removing
 /// or reordering blocks belongs to rigs, not scenes.
 class SnapshotStrip::AddPanel final : public juce::Component
 {
 public:
-    /// `editIndex` >= 0 edits an existing snapshot's name and safes instead of
+    /// One checklist row: 18px amber checkbox, label, and the block's category
+    /// dot on the right edge. Included rows get the raised fill.
+    class Row final : public juce::Component
+    {
+    public:
+        Row(juce::String label, bool on, juce::Colour dot, juce::String uid)
+            : mLabel(std::move(label))
+            , mUid(std::move(uid))
+            , mDot(dot)
+            , mOn(on)
+        {
+        }
+
+        bool isOn() const { return mOn; }
+        const juce::String& getUid() const { return mUid; }
+
+        void mouseUp(const juce::MouseEvent& event) override
+        {
+            if (!contains(event.getPosition()))
+                return;
+            mOn = !mOn;
+            repaint();
+        }
+
+        void paint(juce::Graphics& g) override
+        {
+            const auto bounds = getLocalBounds().toFloat();
+
+            if (mOn)
+            {
+                g.setColour(theme::colours::panelRaised);
+                g.fillRoundedRectangle(bounds, theme::metrics::radiusMd);
+            }
+
+            const juce::Rectangle<float> box{12.0f, bounds.getCentreY() - 9.0f, 18.0f, 18.0f};
+
+            if (mOn)
+            {
+                g.setColour(theme::colours::accent);
+                g.fillRoundedRectangle(box, 5.0f);
+
+                juce::Path tick;
+                tick.startNewSubPath(box.getX() + 4.5f, box.getCentreY() + 0.5f);
+                tick.lineTo(box.getCentreX() - 0.5f, box.getBottom() - 5.0f);
+                tick.lineTo(box.getRight() - 4.0f, box.getY() + 5.0f);
+                g.setColour(theme::colours::onAccent);
+                g.strokePath(tick, juce::PathStrokeType(2.2f, juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
+            }
+            else
+            {
+                g.setColour(theme::colours::outlineStrong);
+                g.drawRoundedRectangle(box.reduced(0.75f), 5.0f, 1.5f);
+            }
+
+            g.setColour(mOn ? theme::colours::text : theme::colours::textFaint);
+            g.setFont(theme::fonts::ui(15.0f, mOn ? 600 : 400));
+            g.drawText(mLabel, getLocalBounds().withTrimmedLeft(42).withTrimmedRight(30),
+                       juce::Justification::centredLeft, true);
+
+            if (!mDot.isTransparent())
+            {
+                g.setColour(mDot);
+                g.fillRoundedRectangle(bounds.getRight() - 22.0f, bounds.getCentreY() - 5.0f, 10.0f,
+                                       10.0f, 3.0f);
+            }
+        }
+
+    private:
+        juce::String mLabel, mUid;
+        juce::Colour mDot;
+        bool mOn;
+    };
+
+    /// `editIndex` >= 0 edits an existing scene's name and checklist instead of
     /// creating one, so a scene can be re-scoped without rebuilding it.
     AddPanel(BlockRigProcessor& processor, std::function<void()> onSaved, int editIndex = -1)
         : mProcessor(processor)
         , mOnSaved(std::move(onSaved))
         , mEditIndex(editIndex)
     {
-        mNameLabel.setText("NAME", juce::dontSendNotification);
-        mNameLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-        mNameLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        const auto styleCaption = [](juce::Label& label, const juce::String& text) {
+            label.setText(text, juce::dontSendNotification);
+            label.setFont(theme::fonts::ui(11.0f, 500));
+            label.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        };
+
+        styleCaption(mNameLabel, "Name");
         addAndMakeVisible(mNameLabel);
 
         const auto& existing = mProcessor.getSnapshots().getSnapshots();
         const bool editing = mEditIndex >= 0 && mEditIndex < static_cast<int>(existing.size());
 
+        mName.setFont(theme::fonts::ui(16.0f, 600));
         mName.setText(editing ? existing[static_cast<size_t>(mEditIndex)].name
-                              : "Snapshot " + juce::String(static_cast<int>(existing.size() + 1)));
+                              : "Scene " + juce::String(static_cast<int>(existing.size() + 1)));
         mName.setSelectAllWhenFocused(true);
         addAndMakeVisible(mName);
 
-        mSafesLabel.setText("SAVED IN THIS SNAPSHOT", juce::dontSendNotification);
-        mSafesLabel.setFont(juce::FontOptions(10.0f, juce::Font::bold));
-        mSafesLabel.setColour(juce::Label::textColourId, theme::colours::textFaint);
+        styleCaption(mSafesLabel, "Saved in this scene");
         addAndMakeVisible(mSafesLabel);
 
-        // Everything defaults on for a new snapshot; editing shows what this one
+        // Everything defaults on for a new scene; editing shows what this one
         // actually holds.
         for (auto* block : mProcessor.getChain().getBlocks())
         {
@@ -149,79 +227,114 @@ public:
                 !editing
                 || existing[static_cast<size_t>(mEditIndex)].blockStates.count(block->getUid()) > 0;
 
-            auto toggle = std::make_unique<juce::ToggleButton>(block->getDisplayName());
-            toggle->setToggleState(ticked, juce::dontSendNotification);
-            toggle->getProperties().set("uid", block->getUid());
-            mHolder.addAndMakeVisible(*toggle);
-            mBlockToggles.push_back(std::move(toggle));
+            juce::PluginDescription description = block->getMissingDescription();
+            if (auto* plugin = block->getPlugin())
+                plugin->fillInPluginDescription(description);
+
+            auto row = std::make_unique<Row>(block->getDisplayName(), ticked,
+                                             getCategoryColour(categoriseBlock(description)),
+                                             block->getUid());
+            mHolder.addAndMakeVisible(*row);
+            mBlockRows.push_back(std::move(row));
         }
 
-        mTempoToggle.setToggleState(!editing || existing[static_cast<size_t>(mEditIndex)].includeTempo,
-                                    juce::dontSendNotification);
-        mHolder.addAndMakeVisible(mTempoToggle);
-        mTunerToggle.setToggleState(!editing || existing[static_cast<size_t>(mEditIndex)].includeTuner,
-                                    juce::dontSendNotification);
-        mHolder.addAndMakeVisible(mTunerToggle);
+        mTempoRow = std::make_unique<Row>("Tempo & time signature",
+                                          !editing
+                                              || existing[static_cast<size_t>(mEditIndex)].includeTempo,
+                                          juce::Colours::transparentBlack, juce::String());
+        mHolder.addAndMakeVisible(*mTempoRow);
 
-        mSave.setButtonText(editing ? "Update snapshot" : "Save snapshot");
+        mTunerRow = std::make_unique<Row>("Tuner",
+                                          !editing
+                                              || existing[static_cast<size_t>(mEditIndex)].includeTuner,
+                                          juce::Colours::transparentBlack, juce::String());
+        mHolder.addAndMakeVisible(*mTunerRow);
 
         mViewport.setViewedComponent(&mHolder, false);
         mViewport.setScrollBarsShown(true, false);
         addAndMakeVisible(mViewport);
 
+        mCancel.onClick = [this] { close(); };
+        addAndMakeVisible(mCancel);
+
+        mSave.setButtonText(editing ? "Update scene" : "Save scene");
+        mSave.getProperties().set("primary", true);
         mSave.onClick = [this] { save(); };
         addAndMakeVisible(mSave);
 
-        setSize(360, 200 + juce::jmin(5, static_cast<int>(mBlockToggles.size())) * 26);
+        const auto rows = static_cast<int>(mBlockRows.size()) + 2;
+        setSize(460, 176 + juce::jmin(6, rows) * kRowStep);
+    }
+
+    void parentHierarchyChanged() override
+    {
+        // A save dialog has no business being pinned open.
+        if (auto* window = findParentComponentOfClass<BlockWindow>())
+            window->setPinnable(false);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(theme::colours::background); }
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced(theme::metrics::gap);
+        auto area = getLocalBounds().reduced(theme::metrics::padding, theme::metrics::gap);
 
-        mNameLabel.setBounds(area.removeFromTop(14));
-        mName.setBounds(area.removeFromTop(28));
-        area.removeFromTop(10);
-        mSafesLabel.setBounds(area.removeFromTop(14));
+        mNameLabel.setBounds(area.removeFromTop(16));
+        area.removeFromTop(4);
+        mName.setBounds(area.removeFromTop(40));
+        area.removeFromTop(12);
+        mSafesLabel.setBounds(area.removeFromTop(16));
+        area.removeFromTop(6);
 
-        auto buttons = area.removeFromBottom(34);
-        mSave.setBounds(buttons.removeFromRight(120).reduced(0, 3));
+        auto footer = area.removeFromBottom(40);
+        mSave.setBounds(footer.removeFromRight(130).reduced(0, 2));
+        footer.removeFromRight(10);
+        mCancel.setBounds(footer.removeFromRight(96).reduced(0, 2));
 
-        area.removeFromBottom(4);
+        area.removeFromBottom(10);
         mViewport.setBounds(area);
 
-        const int rowHeight = 26;
-        mHolder.setSize(mViewport.getMaximumVisibleWidth(),
-                        rowHeight * (static_cast<int>(mBlockToggles.size()) + 2));
+        const auto rowWidth = mViewport.getMaximumVisibleWidth();
+        mHolder.setSize(rowWidth, kRowStep * (static_cast<int>(mBlockRows.size()) + 2));
 
         int y = 0;
-        for (auto& toggle : mBlockToggles)
-        {
-            toggle->setBounds(0, y, mHolder.getWidth(), rowHeight);
-            y += rowHeight;
-        }
-        mTempoToggle.setBounds(0, y, mHolder.getWidth(), rowHeight);
-        mTunerToggle.setBounds(0, y + rowHeight, mHolder.getWidth(), rowHeight);
+        const auto place = [&](Row& row) {
+            row.setBounds(0, y, rowWidth, kRowHeight);
+            y += kRowStep;
+        };
+
+        for (auto& row : mBlockRows)
+            place(*row);
+        place(*mTempoRow);
+        place(*mTunerRow);
     }
 
 private:
+    static constexpr int kRowHeight = 44;
+    static constexpr int kRowStep = kRowHeight + 4;
+
+    void close()
+    {
+        // Hosted inside a BlockWindow; its close callback tears us down.
+        if (auto* window = findParentComponentOfClass<BlockWindow>())
+            if (window->onClose)
+                window->onClose();
+    }
+
     void save()
     {
         juce::StringArray uids;
-        for (const auto& toggle : mBlockToggles)
-            if (toggle->getToggleState())
-                uids.add(toggle->getProperties()["uid"].toString());
+        for (const auto& row : mBlockRows)
+            if (row->isOn())
+                uids.add(row->getUid());
 
         auto name = mName.getText().trim();
         if (name.isEmpty())
-            name = "Snapshot";
+            name = "Scene";
 
         auto& bank = mProcessor.getSnapshots();
-        auto captured = snapshots::Bank::capture(mProcessor, name, uids,
-                                                 mTempoToggle.getToggleState(),
-                                                 mTunerToggle.getToggleState());
+        auto captured = snapshots::Bank::capture(mProcessor, name, uids, mTempoRow->isOn(),
+                                                 mTunerRow->isOn());
 
         if (mEditIndex >= 0 && mEditIndex < static_cast<int>(bank.getSnapshots().size()))
         {
@@ -237,10 +350,7 @@ private:
         if (mOnSaved)
             mOnSaved();
 
-        // Hosted inside a BlockWindow; its close callback tears us down.
-        if (auto* window = findParentComponentOfClass<BlockWindow>())
-            if (window->onClose)
-                window->onClose();
+        close();
     }
 
     BlockRigProcessor& mProcessor;
@@ -250,10 +360,10 @@ private:
     juce::TextEditor mName;
     juce::Viewport mViewport;
     juce::Component mHolder;
-    std::vector<std::unique_ptr<juce::ToggleButton>> mBlockToggles;
-    juce::ToggleButton mTempoToggle{"Tempo & time signature"};
-    juce::ToggleButton mTunerToggle{"Tuner"};
-    juce::TextButton mSave{"Save snapshot"};
+    std::vector<std::unique_ptr<Row>> mBlockRows;
+    std::unique_ptr<Row> mTempoRow, mTunerRow;
+    juce::TextButton mCancel{"Cancel"};
+    juce::TextButton mSave{"Save scene"};
     int mEditIndex = -1;
 };
 
@@ -427,7 +537,7 @@ void SnapshotStrip::showChipMenu(int index)
                                                         index);
                 const auto width = panel->getWidth();
                 const auto height = panel->getHeight();
-                openPanel(std::move(panel), "Edit snapshot", width, height);
+                openPanel(std::move(panel), "Edit scene", width, height);
             }
         }
         else if (choice == 2)
@@ -458,7 +568,7 @@ void SnapshotStrip::showAddPanel()
 
     const auto width = panel->getWidth();
     const auto height = panel->getHeight();
-    openPanel(std::move(panel), "New snapshot", width, height);
+    openPanel(std::move(panel), "Save scene", width, height);
 }
 
 void SnapshotStrip::paint(juce::Graphics& g)

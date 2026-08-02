@@ -502,12 +502,15 @@ AppShell::AppShell(BlockRigProcessor& processor, juce::AudioDeviceManager* devic
     : mProcessor(processor)
     , mDeviceManager(deviceManager)
 {
+    juce::LookAndFeel::setDefaultLookAndFeel(&mLook);
     setOpaque(true);
     setSize(1440, 820);
 }
 
 AppShell::~AppShell()
 {
+    juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+
     if (mScanThread.joinable())
         mScanThread.join();
 }

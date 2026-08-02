@@ -49,8 +49,18 @@ numerics (BPM, dB, Hz, ms, CPU %).
   that destroys the File's owner — now by-value + deferred activation), and a
   systemic mojibake sweep (non-ASCII UI literals read as Latin-1 → ellipses now
   ASCII, ·/—/• wrapped in `String::fromUTF8`).
-- **S5 Picker/menus/dialog**: 4d category-chip picker with favourite stars, 4e menu
-  styling (comes mostly free from S1 LnF), 4h save-scene dialog.
+- **S5 Picker/menus/dialog** — **DONE (2026-08-02, verified in the running app)**:
+  4d picker rebuilt (560px popover: category chip filter row, 52px rows with icon
+  chip + "Vendor · Format" source line + favourite stars persisted to
+  …/Application Support/BlockRig/starred-blocks.txt, starred section, amber
+  selected row with 3px left bar, "N matches of M" footer; CPU badges omitted —
+  no persisted per-plugin load data exists). 4e: block menu reordered to the mock
+  (Open editor / Bypass / chain edits incl. new Replace… / red Remove / CPU stats
+  footer); the Look is now the application-default LookAndFeel via AppShell, so
+  untargeted popups (the block context menu) stop falling back to stock JUCE.
+  4h: save-scene dialog rebuilt (Name field 16/600, "Saved in this scene" 44px
+  checklist rows with raised fill + 18px amber checkboxes + category dots,
+  Cancel + primary Save scene, Pin hidden via BlockWindow::setPinnable).
 - **S6 Tuner + Gig**: 4i full-screen tuner (segmented Needle/Strobe, ±5¢ green
   zone, string pads E A D G B e, reference dropdown), 4j gig mode (setlist column
   maps songs→rigs, sections→scenes; scene pad grid with category dots).

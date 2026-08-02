@@ -33,6 +33,10 @@ public:
     void setPinned(bool shouldBePinned);
     bool isPinned() const { return mPinned; }
 
+    /// Dialogs (save scene) hide the Pin button — pinning them open is
+    /// meaningless.
+    void setPinnable(bool pinnable) { mPin.setVisible(pinnable); }
+
     /// The muted mono line after the title — the capture / IR filename in the
     /// mock. Panels update it as files load.
     void setSubtitle(juce::String subtitle);

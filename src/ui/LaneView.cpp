@@ -718,36 +718,40 @@ void LaneView::showBlockMenu(const juce::String& uid)
     if (block == nullptr)
         return;
 
+    const auto found = mProcessor.getChain().findBlock(uid);
+    const auto position = found.value_or(BlockPosition{});
+    const bool split = mProcessor.getChain().isStageSplit(position.stage);
+
+    // 4e's order: act on the block, then change the chain around it, then the
+    // destructive item, then the block's numbers as a footer.
     juce::PopupMenu menu;
-    menu.addItem(1, block->isBypassed() ? "Enable" : "Bypass");
     menu.addItem(2, "Open editor");
+    menu.addItem(1, block->isBypassed() ? "Enable" : "Bypass");
     menu.addSeparator();
     menu.addItem(3, "Add block before");
     menu.addItem(4, "Add block after");
+    menu.addItem(11, "Replace...");
+    if (split)
+        menu.addItem(6, "Merge this stage back to one path");
+    else
+        menu.addItem(7, "Split this stage into A / B");
     menu.addSeparator();
     menu.addItem(8, "Copy", !block->isMissing());
     menu.addItem(9, "Paste after", mProcessor.getClipboard().hasContent());
     menu.addItem(10, "Save as favourite...", !block->isMissing());
     menu.addSeparator();
-    menu.addItem(5, "Remove");
+    menu.addItem(juce::PopupMenu::Item("Remove").setID(5).setColour(theme::colours::bad));
     menu.addSeparator();
 
     // Per-block cost and latency, the numbers people actually want when a rig
     // starts struggling.
     const auto& load = block->getLoad();
-    menu.addSectionHeader("CPU " + juce::String(load.getAverage() * 100.0f, 2) + "%  (peak "
-                          + juce::String(load.getPeak() * 100.0f, 2) + "%)   Latency "
-                          + juce::String(block->getLatencySamples()) + " smp");
-
-    const auto found = mProcessor.getChain().findBlock(uid);
-    const auto position = found.value_or(BlockPosition{});
-    const bool split = mProcessor.getChain().isStageSplit(position.stage);
-
-    menu.addSeparator();
-    if (split)
-        menu.addItem(6, "Merge this stage back to one path");
-    else
-        menu.addItem(7, "Split this stage into A / B");
+    menu.addItem(juce::PopupMenu::Item("CPU " + juce::String(load.getAverage() * 100.0f, 2)
+                                       + juce::String::fromUTF8("% \xc2\xb7 peak ")
+                                       + juce::String(load.getPeak() * 100.0f, 2)
+                                       + juce::String::fromUTF8("% \xc2\xb7 ")
+                                       + juce::String(block->getLatencySamples()) + " smp")
+                     .setEnabled(false));
 
     menu.showMenuAsync(juce::PopupMenu::Options(), [this, uid, position](int choice) {
         auto* target = mProcessor.getChain().getBlockByUid(uid);
@@ -797,6 +801,26 @@ void LaneView::showBlockMenu(const juce::String& uid)
                     selectBlock({});
                 refresh();
                 break;
+            case 11:
+            {
+                // Replace: pick a block for this slot, then swap it in.
+                juce::Component* anchor = this;
+                for (auto& placed : mTiles)
+                    if (placed.position.stage == position.stage && placed.position.row == position.row
+                        && placed.position.index == position.index)
+                        anchor = placed.tile.get();
+
+                BlockPicker::show(mProcessor.getCatalog(), *anchor,
+                                  [this, uid, position](const juce::PluginDescription& description) {
+                                      mProcessor.removeBlock(uid);
+                                      mProcessor.addBlock(description, position,
+                                                          [this](juce::String newUid, juce::String) {
+                                                              refresh();
+                                                              selectBlock(newUid);
+                                                          });
+                                  });
+                break;
+            }
             case 6: mProcessor.mergeStage(position.stage); refresh(); break;
             case 7: mProcessor.splitStage(position.stage); refresh(); break;
             default: break;
