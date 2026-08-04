@@ -280,6 +280,8 @@ if(BLOCKRIG_BUILD_TESTS)
         src/state/RigMigration.cpp
         src/state/GraphState.cpp
         src/host/Graph.cpp
+        src/host/GraphLane.cpp
+        src/host/BlockChain.cpp
         src/host/BlockInstance.cpp)
 
     target_include_directories(migration_tests PRIVATE src)

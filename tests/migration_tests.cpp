@@ -11,6 +11,7 @@
 #include <tuple>
 
 #include "host/Graph.h"
+#include "host/GraphLane.h"
 #include "state/GraphState.h"
 #include "state/RigMigration.h"
 #include "state/RigState.h"
@@ -720,6 +721,111 @@ void testCorruptDocumentIsReported()
     check(notAGraph.error.isNotEmpty(), "a document of the wrong type is refused");
 }
 
+//==============================================================================
+// Lane projection: the existing UI reading a graph.
+
+void testLaneProjection()
+{
+    std::printf("\nLane projection over a migrated graph\n");
+
+    namespace lane = blockrig::graphlane;
+
+    // The shape the lane drew before migration: head, then a two-row split, then
+    // a tail. The projection must show exactly that back.
+    const auto document = graphOf(migrate_1_to_2(
+        makeRig({makeStage({makeRow({"head"})}),
+                 makeStage({makeRow({"a1"}), makeRow({"b1"})}, "parallel"),
+                 makeStage({makeRow({"tail"})})})));
+
+    blockrig::Graph graph;
+    blockrig::graphstate::applyStructure(graph, document);
+
+    // applyStructure leaves blocks null, and the projection only shows nodes
+    // that have one — so give every node a block, as the restore path will.
+    std::vector<std::unique_ptr<blockrig::BlockInstance>> blocks;
+
+    for (const auto& node : graph.getNodes())
+    {
+        if (node.uid == blockrig::kInputNodeUid || node.uid == blockrig::kOutputNodeUid)
+            continue;
+
+        auto block = std::make_unique<blockrig::BlockInstance>(nullptr, node.uid);
+        if (auto* mutableNode = graph.findNode(node.uid))
+            mutableNode->block = block.get();
+
+        blocks.push_back(std::move(block));
+    }
+
+    // The source rig had three stages: head, the split, tail. The projection has
+    // to give exactly that back, or the lane would redraw a rig it did not edit.
+    check(lane::getNumStages(graph) == 3, "the three source stages come back as three");
+    check(! lane::isStageSplit(graph, 0), "the head stage is not split");
+    check(lane::getNumRows(graph, 0) == 1, "and has one row");
+
+    // The split stage: two rows, one block in each.
+    const int splitStage = 1;
+    check(lane::isStageSplit(graph, splitStage), "the split stage reads as split");
+    check(lane::getNumRows(graph, splitStage) == 2, "with two rows");
+    check(lane::getBlocksInRow(graph, splitStage, 0).size() == 1, "one block on row 0");
+    check(lane::getBlocksInRow(graph, splitStage, 1).size() == 1, "one block on row 1");
+
+    // Positions round-trip.
+    const auto headPosition = lane::findBlock(graph, "head");
+    check(headPosition.has_value() && headPosition->stage == 0 && headPosition->row == 0,
+          "head is at stage 0, row 0");
+
+    const auto b1Position = lane::findBlock(graph, "b1");
+    check(b1Position.has_value() && b1Position->row == 1, "b1 is on row 1");
+
+    check(! lane::findBlock(graph, "nonexistent").has_value(), "an unknown uid has no position");
+
+    // Index order walks stages then rows, like the lane's own accessor.
+    check(lane::getBlockByIndex(graph, 0) != nullptr, "index 0 resolves");
+    check(lane::getBlockByIndex(graph, 99) == nullptr, "an out-of-range index is null");
+
+    int counted = 0;
+
+    while (lane::getBlockByIndex(graph, counted) != nullptr)
+        ++counted;
+
+    check(counted == graph.getNumBlocks(),
+          "walking by index reaches every block exactly once");
+}
+
+void testProjectionSkipsInvisibleNodes()
+{
+    std::printf("\nThe lane does not show what it should not\n");
+
+    namespace lane = blockrig::graphlane;
+
+    blockrig::Graph graph;
+
+    // A node with no block: not yet instantiated, or an endpoint. Either way the
+    // lane has nothing to draw, so it must not occupy a stage.
+    blockrig::GraphNode blockless;
+    blockless.uid = "blockless";
+    blockless.col = 1;
+    graph.addNode(blockless);
+
+    check(lane::getNumStages(graph) == 0, "a node without a block occupies no stage");
+    check(! lane::findBlock(graph, "blockless").has_value(), "and has no lane position");
+    check(! lane::findBlock(graph, blockrig::kInputNodeUid).has_value(),
+          "endpoints are not lane blocks");
+
+    // A tailing node is already deleted as far as the UI is concerned.
+    auto plugin = std::make_unique<blockrig::BlockInstance>(nullptr, "dying");
+
+    blockrig::GraphNode dying;
+    dying.uid = "dying";
+    dying.col = 2;
+    dying.block = plugin.get();
+    dying.isTailing = true;
+    graph.addNode(dying);
+
+    check(lane::getNumStages(graph) == 0, "a block ringing out is not drawn");
+    check(! lane::findBlock(graph, "dying").has_value(), "and has no position");
+}
+
 } // namespace
 
 int main()
@@ -743,6 +849,8 @@ int main()
     testTailingNodesAreNotSaved();
     testMigratedRigsRoundTrip();
     testCorruptDocumentIsReported();
+    testLaneProjection();
+    testProjectionSkipsInvisibleNodes();
 
     std::printf("\n%s (%d failure%s)\n",
                 gFailures == 0 ? "ALL PASSED" : "FAILURES",
