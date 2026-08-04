@@ -252,6 +252,7 @@ if(BLOCKRIG_BUILD_TESTS)
     target_sources(graph_tests PRIVATE
         tests/graph_tests.cpp
         src/host/Graph.cpp
+        src/host/GraphEngine.cpp
         src/host/BlockInstance.cpp)
 
     target_include_directories(graph_tests PRIVATE src)

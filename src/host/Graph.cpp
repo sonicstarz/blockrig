@@ -399,6 +399,16 @@ RenderPlan Graph::compile(int maxBlockSize) const
 
     plan.numBuffers = nextBuffer;
 
+    // The pool itself, allocated and cleared here so process() only ever reads
+    // and writes within it.
+    plan.buffers.resize(static_cast<size_t>(nextBuffer));
+
+    for (auto& buffer : plan.buffers)
+    {
+        buffer.setSize(2, maxBlockSize, false, true, true);
+        buffer.clear();
+    }
+
     return plan;
 }
 

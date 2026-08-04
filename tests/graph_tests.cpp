@@ -4,10 +4,12 @@
 // testable without instantiating a plug-in. Audio equality against real hosted
 // plug-ins arrives with the renderer; these are the guarantees underneath it.
 
+#include <cmath>
 #include <cstdio>
 #include <set>
 
 #include "host/Graph.h"
+#include "host/GraphEngine.h"
 
 namespace
 {
@@ -363,10 +365,364 @@ void testDiamond()
     check(indexOf(plan, "c") < indexOf(plan, "d"), "c before d");
 }
 
+//==============================================================================
+// Rendering. From here on the plan is actually executed, which needs blocks
+// that behave like plug-ins.
+
+constexpr double kSampleRate = 48000.0;
+constexpr int kBlockSize = 128;
+
+/// A plug-in that delays by exactly the latency it reports, and optionally
+/// inverts. Both halves matter: a plug-in that reported latency without
+/// delaying would make the null test pass for the wrong reason.
+///
+/// `reportedLatency` exists so a test can build the honest failure mode — a
+/// plug-in that delays but under-reports, leaving the compiler nothing to
+/// compensate. Pass -1 (the default) for a plug-in that tells the truth.
+class DelayPlugin final : public juce::AudioPluginInstance
+{
+public:
+    DelayPlugin(int latencySamples, bool invert, int reportedLatency = -1)
+        : juce::AudioPluginInstance(BusesProperties()
+                                        .withInput("In", juce::AudioChannelSet::stereo(), true)
+                                        .withOutput("Out", juce::AudioChannelSet::stereo(), true)),
+          mLatency(latencySamples),
+          mInvert(invert)
+    {
+        setLatencySamples(reportedLatency >= 0 ? reportedLatency : mLatency);
+    }
+
+    const juce::String getName() const override { return "DelayPlugin"; }
+
+    void prepareToPlay(double, int maximumExpectedSamplesPerBlock) override
+    {
+        mLine.setSize(2, mLatency + maximumExpectedSamplesPerBlock + 1, false, true, true);
+        mLine.clear();
+        mWritePosition = 0;
+    }
+
+    void releaseResources() override {}
+
+    void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override
+    {
+        const int numSamples = buffer.getNumSamples();
+        const float sign = mInvert ? -1.0f : 1.0f;
+
+        if (mLatency <= 0)
+        {
+            buffer.applyGain(sign);
+            return;
+        }
+
+        const int capacity = mLine.getNumSamples();
+
+        for (int channel = 0; channel < juce::jmin(2, buffer.getNumChannels()); ++channel)
+        {
+            auto* data = buffer.getWritePointer(channel);
+            auto* line = mLine.getWritePointer(channel);
+            int writePosition = mWritePosition;
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const int readPosition = (writePosition + capacity - mLatency) % capacity;
+                const float delayed = line[readPosition];
+                line[writePosition] = data[i];
+                data[i] = delayed * sign;
+                writePosition = (writePosition + 1) % capacity;
+            }
+        }
+
+        mWritePosition = (mWritePosition + numSamples) % capacity;
+    }
+
+    void fillInPluginDescription(juce::PluginDescription& description) const override
+    {
+        description.name = "DelayPlugin";
+        description.pluginFormatName = "Test";
+        description.uniqueId = 1;
+    }
+
+    juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+    bool hasEditor() const override { return false; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram(int) override {}
+    const juce::String getProgramName(int) override { return {}; }
+    void changeProgramName(int, const juce::String&) override {}
+    void getStateInformation(juce::MemoryBlock&) override {}
+    void setStateInformation(const void*, int) override {}
+
+private:
+    int mLatency = 0;
+    bool mInvert = false;
+    juce::AudioBuffer<float> mLine;
+    int mWritePosition = 0;
+};
+
+/// Keeps test blocks alive for the duration of a test; the graph only holds
+/// raw pointers, exactly as the lane does.
+struct BlockPool
+{
+    std::vector<std::unique_ptr<BlockInstance>> blocks;
+
+    BlockInstance* add(const juce::String& uid, int latency, bool invert = false,
+                       int reportedLatency = -1)
+    {
+        auto plugin = std::make_unique<DelayPlugin>(latency, invert, reportedLatency);
+        auto block = std::make_unique<BlockInstance>(std::move(plugin), uid);
+        block->prepare(kSampleRate, kBlockSize, false);
+
+        auto* raw = block.get();
+        blocks.push_back(std::move(block));
+        return raw;
+    }
+};
+
+/// Deterministic, non-repeating enough to catch an alignment error that a sine
+/// would hide by lining up with its own period.
+float testSample(int index)
+{
+    return 0.25f * std::sin(index * 0.07f) + 0.15f * std::sin(index * 0.31f + 1.1f);
+}
+
+/// Runs `numBlocks` blocks of test signal through the engine, returning the peak
+/// absolute output seen after `primeBlocks` blocks have gone by. Priming matters:
+/// every delay line starts full of zeros, so the first samples out are silence
+/// no matter what the alignment does.
+float peakAfterPriming(GraphEngine& engine, int numBlocks, int primeBlocks)
+{
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    float peak = 0.0f;
+    int sampleIndex = 0;
+
+    for (int block = 0; block < numBlocks; ++block)
+    {
+        for (int i = 0; i < kBlockSize; ++i)
+        {
+            const float value = testSample(sampleIndex++);
+            buffer.setSample(0, i, value);
+            buffer.setSample(1, i, value);
+        }
+
+        engine.process(buffer, midi);
+
+        if (block >= primeBlocks)
+            peak = juce::jmax(peak, buffer.getMagnitude(0, kBlockSize));
+    }
+
+    return peak;
+}
+
+void testRenderPassThrough()
+{
+    std::printf("\nRendering: signal reaches OUT\n");
+
+    BlockPool pool;
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    auto node = makeNode("a", 1, 0);
+    node.block = pool.add("a", 0);
+    graph.addNode(node);
+
+    wire(graph, kInputNodeUid, "a");
+    wire(graph, "a", kOutputNodeUid);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    const float peak = peakAfterPriming(engine, 8, 1);
+    check(peak > 0.1f, "audio flows IN -> block -> OUT");
+    check(engine.getLatencySamples() == 0, "a zero-latency chain reports zero");
+}
+
+void testRenderFanInSums()
+{
+    std::printf("\nRendering: fan-in sums\n");
+
+    BlockPool pool;
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    for (int branch = 0; branch < 2; ++branch)
+    {
+        const auto uid = "branch" + juce::String(branch);
+        auto node = makeNode(uid, 1, branch);
+        node.block = pool.add(uid, 0);
+        graph.addNode(node);
+        wire(graph, kInputNodeUid, uid);
+        wire(graph, uid, kOutputNodeUid);
+    }
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    for (int i = 0; i < kBlockSize; ++i)
+    {
+        buffer.setSample(0, i, 0.25f);
+        buffer.setSample(1, i, 0.25f);
+    }
+
+    engine.process(buffer, midi);
+
+    // Two unity branches of the same signal sum to twice it. Unity-gain fan-in
+    // is the decided behaviour (docs/19 §7) — the Utility block is where trim
+    // lives, not the wire.
+    check(std::abs(buffer.getSample(0, 64) - 0.5f) < 1.0e-5f, "two branches sum at unity");
+}
+
+void testNullOnAlignedBranches()
+{
+    std::printf("\nThe null test: unequal branch latency must cancel\n");
+
+    // IN fans out to a 256-sample branch and a 64-sample branch, the second
+    // inverted, summed at OUT. If the compiler delays the short branch by
+    // exactly 192 samples, the two arrive sample-aligned and cancel to silence.
+    // If alignment is wrong by even one sample, the residue is loud.
+    BlockPool pool;
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    auto slow = makeNode("slow", 1, 0);
+    slow.block = pool.add("slow", 256, false);
+    graph.addNode(slow);
+
+    auto fast = makeNode("fast", 1, 1);
+    fast.block = pool.add("fast", 64, true);
+    graph.addNode(fast);
+
+    wire(graph, kInputNodeUid, "slow");
+    wire(graph, kInputNodeUid, "fast");
+    wire(graph, "slow", kOutputNodeUid);
+    wire(graph, "fast", kOutputNodeUid);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    check(engine.getLatencySamples() == 256, "the graph reports the long branch's latency");
+
+    // 256 samples of latency is two blocks; prime four to be safe.
+    const float residue = peakAfterPriming(engine, 32, 4);
+
+    std::printf("        residual peak: %.9f\n", residue);
+    check(residue < 1.0e-6f, "aligned branches cancel to silence");
+
+    // The control: the same graph with alignment defeated must NOT null, or the
+    // test above proves nothing about the compensation. Both blocks still delay
+    // by 256 and 64 samples, but report 0, so the compiler has nothing to
+    // compensate — which is precisely the real-world failure this test guards
+    // against. No engine backdoor needed; the plug-ins simply under-report, the
+    // way a badly behaved plug-in does.
+    BlockPool controlPool;
+
+    GraphEngine control;
+    auto& controlGraph = control.getGraph();
+
+    auto slowControl = makeNode("slow", 1, 0);
+    slowControl.block = controlPool.add("slow", 256, false, 0);
+    controlGraph.addNode(slowControl);
+
+    auto fastControl = makeNode("fast", 1, 1);
+    fastControl.block = controlPool.add("fast", 64, true, 0);
+    controlGraph.addNode(fastControl);
+
+    wire(controlGraph, kInputNodeUid, "slow");
+    wire(controlGraph, kInputNodeUid, "fast");
+    wire(controlGraph, "slow", kOutputNodeUid);
+    wire(controlGraph, "fast", kOutputNodeUid);
+
+    control.prepare(kSampleRate, kBlockSize);
+
+    check(control.getLatencySamples() == 0, "the control reports no latency to compensate");
+
+    const float uncompensated = peakAfterPriming(control, 32, 4);
+
+    std::printf("        uncompensated peak: %.9f\n", uncompensated);
+    check(uncompensated > 0.01f, "without alignment the same graph does not null");
+}
+
+void testPlanSwapWhileRendering()
+{
+    std::printf("\nPlan swap under continuous rendering\n");
+
+    BlockPool pool;
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    auto a = makeNode("a", 1, 0);
+    a.block = pool.add("a", 0);
+    graph.addNode(a);
+    wire(graph, kInputNodeUid, "a");
+    wire(graph, "a", kOutputNodeUid);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    // Insert a block into the chain, render, splice it out again, render — the
+    // add/remove churn the canvas will produce, with audio running throughout.
+    // The point is that publishing mid-render never faults and the retirement
+    // queue stays drainable; the audio thread must never free a plan.
+    float peak = 0.0f;
+    int sampleIndex = 0;
+
+    for (int round = 0; round < 24; ++round)
+    {
+        const auto uid = "spliced" + juce::String(round);
+
+        // Splice a new block between a and OUT.
+        auto node = makeNode(uid, 2, 0);
+        node.block = pool.add(uid, 0);
+        engine.getGraph().addNode(node);
+
+        GraphWire toOut;
+        toOut.fromUid = "a";
+        toOut.toUid = kOutputNodeUid;
+        engine.getGraph().removeWire(toOut);
+
+        wire(engine.getGraph(), "a", uid);
+        wire(engine.getGraph(), uid, kOutputNodeUid);
+        engine.publish();
+
+        for (int s = 0; s < kBlockSize; ++s)
+            buffer.setSample(0, s, testSample(sampleIndex++));
+
+        engine.process(buffer, midi);
+        peak = juce::jmax(peak, buffer.getMagnitude(0, kBlockSize));
+
+        // Pull it back out; the chain heals to a -> OUT.
+        engine.getGraph().healAround(uid);
+        engine.publish();
+
+        for (int s = 0; s < kBlockSize; ++s)
+            buffer.setSample(0, s, testSample(sampleIndex++));
+
+        engine.process(buffer, midi);
+        engine.collectGarbage();
+    }
+
+    check(peak > 0.05f, "audio keeps flowing across 24 splice/heal rounds");
+    check(engine.getGraph().getNodes().size() == 3, "the graph is back to IN, a, OUT");
+}
+
 } // namespace
 
 int main()
 {
+    // Rendering tests instantiate AudioProcessors, which JUCE requires a
+    // message manager for.
+    juce::ScopedJuceInitialiser_GUI juceInitialiser;
+
     std::printf("Graph engine tests (G1)\n");
 
     testTopologyAndCycles();
@@ -376,6 +732,10 @@ int main()
     testBufferReuse();
     testHealAndRemove();
     testDiamond();
+    testRenderPassThrough();
+    testRenderFanInSums();
+    testNullOnAlignedBranches();
+    testPlanSwapWhileRendering();
 
     std::printf("\n%s (%d failure%s)\n",
                 gFailures == 0 ? "ALL PASSED" : "FAILURES",

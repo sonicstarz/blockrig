@@ -106,11 +106,17 @@ struct PlanDelay
     int writePosition = 0;
 };
 
-/// Immutable once published.
+/// Immutable once published — except for the sample data inside `buffers` and
+/// `delays`, which only the audio thread touches. Everything is sized and
+/// cleared at compile time on the message thread.
 struct RenderPlan
 {
     std::vector<PlanStep> steps;
     std::vector<PlanDelay> delays;
+
+    /// The pool the steps read and write. Allocated by compile(); the audio
+    /// thread never resizes it.
+    std::vector<juce::AudioBuffer<float>> buffers;
 
     /// How many pool buffers process() needs. Buffers are reused by liveness, so
     /// this is well below one-per-node on any real rig.
