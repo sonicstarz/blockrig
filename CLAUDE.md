@@ -1,18 +1,22 @@
 # CLAUDE.md — BlockRig (working title)
 
 Block-based rig host (standalone + VST3/AU) hosting third-party VST3/AU blocks plus a built-in
-NAM amp block. **Pivoted 2026-07-29; design done, host code not started.** The repo currently
-contains the previous incarnation (dual-slot NAM plugin, working, tests green) whose `src/dsp/`
-engine is carried forward as the NAM block.
+NAM amp block. **v1 feature set is built (P0–P11) and tests are green.** Outstanding: P6
+hardening, **P7 live verification (needs a human at the machine)**, and P12 ship. `src/dsp/` is
+the previous incarnation's engine, carried forward as the NAM block.
+
+Next planned work is `docs/19-GRAPH-ENGINE.md` — free-form routing on a snapping patch canvas,
+superseding the lane/stage model. Planned 2026-08-02, no code yet.
 
 ## Read first, in order
 
-1. `docs/16-BUILD-PLAN.md` — what to build next (P0–P6, acceptance criteria)
-2. `docs/12-ARCHITECTURE.md` — chain engine, scanning, threading, deployment
-3. `docs/14-SCHEMA.md` — normative rig state schema (versioned; don't improvise fields)
-4. `docs/15-NAM-BLOCK.md` — NAM block spec + exact reuse map of existing code
-5. `docs/13-UI-UX.md` / `docs/11-RESEARCH.md` — UI decisions / research basis
-6. `docs/archive-nam-plugin/01-RESEARCH.md` §"Verified during M0" — hard-won NAM facts
+1. `docs/16-BUILD-PLAN.md` — phase status and what's left (P6, P7, P12); acceptance criteria
+2. `docs/19-GRAPH-ENGINE.md` — the next architecture, if that's what you're here for
+3. `docs/12-ARCHITECTURE.md` — chain engine, scanning, threading, deployment
+4. `docs/14-SCHEMA.md` — normative rig state schema (versioned; don't improvise fields)
+5. `docs/15-NAM-BLOCK.md` — NAM block spec + exact reuse map of existing code
+6. `docs/13-UI-UX.md` / `docs/18-UI-OVERHAUL.md` / `docs/11-RESEARCH.md` — UI decisions / research
+7. `docs/archive-nam-plugin/01-RESEARCH.md` §"Verified during M0" — hard-won NAM facts
 
 ## Hard rules
 
@@ -28,15 +32,26 @@ engine is carried forward as the NAM block.
 
 ## Stack
 
-JUCE 8.0.x (bump past 8.0.9 in P0 — VST3 hosting regression) + CMake, C++20;
+JUCE pinned to **8.0.15** (not 9.0.0 — new CoreAudio implementation) + CMake, C++20;
 NeuralAmpModelerCore v0.5.4 (`NAM_ENABLE_A2_FAST=ON`); hosting via `JUCE_PLUGINHOST_VST3=1` /
 `JUCE_PLUGINHOST_AU=1`; custom standalone shell (`JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1`);
 melatonin_blur/_inspector for UI. `extras/AudioPluginHost` in the JUCE tree is the reference for
 scanning, InternalPluginFormat, and PluginWindow patterns.
 
-## Verify before relying on (P0 checklist, from research)
+## Still unverified (P7 — needs a human at the machine)
 
-- JUCE version's VST3 hosting status + `juce_audio_processors_headless` module split
-- VST3 SDK MIT text in the bundled SDK
-- Hosted-plugin CPU overhead benchmark (unconfirmed 7× report — gate on this)
-- AU instantiation inside Logic; settings-file paths under DAW sandboxes
+P0's checklist is closed: hosting overhead measured at 0.19% of a core per plug-in (the 7× claim
+is rejected), VST3 SDK confirmed MIT in-tree, AU and VST3 hosting both verified. What remains
+open, per `docs/16-BUILD-PLAN.md` §P7:
+
+- macOS mic + Downloads consent flow (TCC re-prompts after every ad-hoc re-sign)
+- TONE3000 API response shapes — `src/net/Tone3000Client.cpp` is written against docs, not the
+  live API; expect one round of shape fixes
+- MIDI learn/PC/expression and BPM tap against real hardware
+- DAW pass: AU in Logic, VST3 in Reaper — chunk round-trip, AU-inside-AU, sandbox catalog access
+
+## Diagnose in the live path, not the harness
+
+The test harness has no audio thread, no TCC, and no session restore — it exonerated three real
+bugs in a row. `--chain-check session` and AudioStatus.log are the ground-truth instruments;
+keep them working as features move.
