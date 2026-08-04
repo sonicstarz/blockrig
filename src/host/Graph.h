@@ -173,6 +173,10 @@ public:
 
     void addNode(GraphNode node);
 
+    /// Back to a bare IN and OUT, unconnected. Used by the loader before
+    /// rebuilding from a document.
+    void clear();
+
     /// Removes the node and every wire touching it. Endpoints refuse removal.
     /// Does not heal the gap — the caller decides whether a removal heals
     /// (drag-out) or leaves a hole; see healAround().

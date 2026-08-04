@@ -278,6 +278,7 @@ if(BLOCKRIG_BUILD_TESTS)
     target_sources(migration_tests PRIVATE
         tests/migration_tests.cpp
         src/state/RigMigration.cpp
+        src/state/GraphState.cpp
         src/host/Graph.cpp
         src/host/BlockInstance.cpp)
 

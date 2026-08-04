@@ -8,8 +8,10 @@
 // quietly become a centred sum.
 
 #include <cstdio>
+#include <tuple>
 
 #include "host/Graph.h"
+#include "state/GraphState.h"
 #include "state/RigMigration.h"
 #include "state/RigState.h"
 
@@ -514,6 +516,210 @@ void testMigrateToCurrent()
     check(! migrateToCurrent(future).isValid(), "a newer document is refused rather than mangled");
 }
 
+//==============================================================================
+// Graph <-> document round-trip.
+
+void testGraphRoundTrip()
+{
+    std::printf("\nGraph serialisation round-trips\n");
+
+    blockrig::Graph original;
+
+    // A diamond with a parked node, so positions, fan-out, fan-in and dormancy
+    // all have to survive the trip.
+    for (const auto& spec : {std::make_tuple("a", 1, 0), std::make_tuple("b", 2, 0),
+                             std::make_tuple("c", 2, 1), std::make_tuple("d", 3, 0),
+                             std::make_tuple("parked", 1, 4)})
+    {
+        blockrig::GraphNode node;
+        node.uid = std::get<0>(spec);
+        node.col = std::get<1>(spec);
+        node.row = std::get<2>(spec);
+        original.addNode(node);
+    }
+
+    const auto connect = [&original](const char* from, const char* to)
+    {
+        blockrig::GraphWire wire;
+        wire.fromUid = from;
+        wire.toUid = to;
+        original.addWire(wire);
+    };
+
+    connect(blockrig::kInputNodeUid, "a");
+    connect("a", "b");
+    connect("a", "c");
+    connect("b", "d");
+    connect("c", "d");
+    connect("d", blockrig::kOutputNodeUid);
+
+    const auto document = blockrig::graphstate::toValueTree(original, {});
+
+    blockrig::Graph restored;
+    const auto load = blockrig::graphstate::applyStructure(restored, document);
+
+    check(load.error.isEmpty(), "the document loads");
+    check(load.rejectedWires == 0, "every wire is accepted on the way back in");
+    check(load.pending.size() == 5, "five blocks are reported as needing instantiation");
+
+    check(restored.getNodes().size() == original.getNodes().size(), "node count matches");
+    check(restored.getWires().size() == original.getWires().size(), "wire count matches");
+
+    // Positions survive, including the parked node's.
+    const auto* parked = restored.findNode("parked");
+    check(parked != nullptr && parked->col == 1 && parked->row == 4,
+          "a dormant node keeps its position");
+
+    const auto* c = restored.findNode("c");
+    check(c != nullptr && c->col == 2 && c->row == 1, "grid positions survive");
+
+    // The real equivalence test: both graphs compile to the same plan.
+    const auto before = original.compile(128);
+    const auto after = restored.compile(128);
+
+    check(before.steps.size() == after.steps.size(), "the same number of steps compile");
+    check(before.numBuffers == after.numBuffers, "the same buffer pool size");
+    check(before.dormantUids.size() == after.dormantUids.size(), "the same nodes are dormant");
+
+    bool sameOrder = before.steps.size() == after.steps.size();
+
+    for (size_t i = 0; sameOrder && i < before.steps.size(); ++i)
+        sameOrder = before.steps[i].uid == after.steps[i].uid;
+
+    check(sameOrder, "and in the same execution order");
+}
+
+void testEndpointsAreNotDuplicated()
+{
+    std::printf("\nEndpoints survive without being duplicated\n");
+
+    blockrig::Graph original;
+
+    if (auto* in = original.findNode(blockrig::kInputNodeUid))
+    {
+        in->col = 0;
+        in->row = 2;
+    }
+
+    blockrig::GraphWire wire;
+    wire.fromUid = blockrig::kInputNodeUid;
+    wire.toUid = blockrig::kOutputNodeUid;
+    original.addWire(wire);
+
+    const auto document = blockrig::graphstate::toValueTree(original, {});
+
+    blockrig::Graph restored;
+    blockrig::graphstate::applyStructure(restored, document);
+
+    check(restored.getNodes().size() == 2, "still exactly one IN and one OUT");
+
+    const auto* in = restored.findNode(blockrig::kInputNodeUid);
+    check(in != nullptr && in->row == 2, "IN's row survives");
+    check(restored.getWires().size() == 1, "the IN -> OUT wire survives");
+}
+
+void testTailingNodesAreNotSaved()
+{
+    std::printf("\nA block ringing out is not written to the document\n");
+
+    blockrig::Graph graph;
+
+    blockrig::GraphNode node;
+    node.uid = "dying";
+    node.col = 1;
+    node.isTailing = true;
+    graph.addNode(node);
+
+    blockrig::GraphWire wire;
+    wire.fromUid = "dying";
+    wire.toUid = blockrig::kOutputNodeUid;
+    graph.addWire(wire);
+
+    const auto document = blockrig::graphstate::toValueTree(graph, {});
+
+    check(countNodes(document) == 2, "the tailing node is left out - it is already deleted");
+    check(! hasWire(document, "dying", "__out"), "and so is its wire");
+}
+
+void testMigratedRigsRoundTrip()
+{
+    std::printf("\nA migrated rig and a saved rig are the same shape\n");
+
+    // This is the property that keeps the two code paths honest: load a migrated
+    // v1 rig, save it straight back out, and the document must be equivalent.
+    const auto migrated = graphOf(migrate_1_to_2(
+        makeRig({makeStage({makeRow({"head"})}),
+                 makeStage({makeRow({"ampL"}), makeRow({"ampR"})}, "dualMono"),
+                 makeStage({makeRow({"tail"})})})));
+
+    blockrig::Graph graph;
+    const auto load = blockrig::graphstate::applyStructure(graph, migrated);
+
+    check(load.rejectedWires == 0, "the migrated document loads cleanly");
+
+    const auto resaved = blockrig::graphstate::toValueTree(graph, {});
+
+    check(countNodes(resaved) == countNodes(migrated), "the same nodes come back out");
+
+    bool wiresMatch = true;
+
+    for (const auto wire : migrated)
+    {
+        if (! wire.hasType(ids::wire))
+            continue;
+
+        if (! hasWire(resaved, wire.getProperty(ids::fromUid).toString(),
+                      wire.getProperty(ids::toUid).toString()))
+            wiresMatch = false;
+    }
+
+    check(wiresMatch, "and every wire survives the trip");
+
+    // The migration's Utility nodes are ordinary nodes on the way back in.
+    const auto utilities = utilityNodes(migrated);
+    check(utilities.size() == 2, "the dualMono Utilities were minted");
+
+    bool utilitiesPresent = true;
+
+    for (const auto& utility : utilities)
+        if (graph.findNode(utility.getProperty(ids::blockUid).toString()) == nullptr)
+            utilitiesPresent = false;
+
+    check(utilitiesPresent, "and loaded back as ordinary nodes");
+}
+
+void testCorruptDocumentIsReported()
+{
+    std::printf("\nA corrupt document is reported, not silently loaded\n");
+
+    juce::ValueTree bad(ids::graph);
+
+    juce::ValueTree node(ids::node);
+    node.setProperty(ids::blockUid, "a", nullptr);
+    bad.appendChild(node, nullptr);
+
+    // A wire to a node that does not exist, and one that would form a cycle.
+    juce::ValueTree dangling(ids::wire);
+    dangling.setProperty(ids::fromUid, "a", nullptr);
+    dangling.setProperty(ids::toUid, "ghost", nullptr);
+    bad.appendChild(dangling, nullptr);
+
+    juce::ValueTree selfWire(ids::wire);
+    selfWire.setProperty(ids::fromUid, "a", nullptr);
+    selfWire.setProperty(ids::toUid, "a", nullptr);
+    bad.appendChild(selfWire, nullptr);
+
+    blockrig::Graph graph;
+    const auto load = blockrig::graphstate::applyStructure(graph, bad);
+
+    check(load.rejectedWires == 2, "both bad wires are counted rather than ignored");
+    check(graph.findNode("a") != nullptr, "the valid node still loaded");
+
+    blockrig::Graph other;
+    const auto notAGraph = blockrig::graphstate::applyStructure(other, juce::ValueTree("Nonsense"));
+    check(notAGraph.error.isNotEmpty(), "a document of the wrong type is refused");
+}
+
 } // namespace
 
 int main()
@@ -532,6 +738,11 @@ int main()
     testEmptyRowPassesThrough();
     testMigratedGraphsLoad();
     testMigrateToCurrent();
+    testGraphRoundTrip();
+    testEndpointsAreNotDuplicated();
+    testTailingNodesAreNotSaved();
+    testMigratedRigsRoundTrip();
+    testCorruptDocumentIsReported();
 
     std::printf("\n%s (%d failure%s)\n",
                 gFailures == 0 ? "ALL PASSED" : "FAILURES",

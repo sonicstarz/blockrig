@@ -45,6 +45,21 @@ const GraphNode* Graph::findNode(const juce::String& uid) const
     return nullptr;
 }
 
+void Graph::clear()
+{
+    mNodes.clear();
+    mWires.clear();
+
+    GraphNode in;
+    in.uid = kInputNodeUid;
+    mNodes.push_back(std::move(in));
+
+    GraphNode out;
+    out.uid = kOutputNodeUid;
+    out.col = 1;
+    mNodes.push_back(std::move(out));
+}
+
 void Graph::addNode(GraphNode node)
 {
     if (hasNode(node.uid))
