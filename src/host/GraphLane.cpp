@@ -122,5 +122,166 @@ BlockInstance* getBlockByIndex(const Graph& graph, int index)
     return nullptr;
 }
 
+//==============================================================================
+namespace
+{
+/// The visible block nearest to `column` on `row`, searching left or right.
+/// Endpoints are the fallbacks: nothing to the left means the signal comes from
+/// IN, nothing to the right means it goes to OUT.
+juce::String neighbourOnRow(const Graph& graph, int column, int row, bool searchLeft)
+{
+    const GraphNode* best = nullptr;
+
+    for (const auto& node : graph.getNodes())
+    {
+        if (! isVisible(node) || node.row != row)
+            continue;
+
+        if (searchLeft ? node.col >= column : node.col <= column)
+            continue;
+
+        if (best == nullptr
+            || (searchLeft ? node.col > best->col : node.col < best->col))
+            best = &node;
+    }
+
+    if (best != nullptr)
+        return best->uid;
+
+    return searchLeft ? kInputNodeUid : kOutputNodeUid;
+}
+
+bool cellOccupied(const Graph& graph, int column, int row)
+{
+    for (const auto& node : graph.getNodes())
+        if (isVisible(node) && node.col == column && node.row == row)
+            return true;
+
+    return false;
+}
+
+/// Splices `uid` between its neighbours on its own row.
+void spliceIntoRow(Graph& graph, const juce::String& uid)
+{
+    const auto* node = graph.findNode(uid);
+
+    if (node == nullptr)
+        return;
+
+    const auto before = neighbourOnRow(graph, node->col, node->row, true);
+    const auto after = neighbourOnRow(graph, node->col, node->row, false);
+
+    // The wire that used to skip past this position is what the new block
+    // replaces. Without removing it the signal would both pass through the new
+    // block and bypass it, summing at the far end — quietly doubling the dry
+    // signal, which is the kind of bug you hear before you see.
+    GraphWire skipped;
+    skipped.fromUid = before;
+    skipped.toUid = after;
+    graph.removeWire(skipped);
+
+    GraphWire incoming;
+    incoming.fromUid = before;
+    incoming.toUid = uid;
+    graph.addWire(incoming);
+
+    GraphWire outgoing;
+    outgoing.fromUid = uid;
+    outgoing.toUid = after;
+    graph.addWire(outgoing);
+}
+
+/// Makes room at `column` by shifting everything at or past it one to the right.
+void openColumn(Graph& graph, int column)
+{
+    for (const auto& node : graph.getNodes())
+    {
+        if (node.uid == kInputNodeUid)
+            continue;
+
+        if (auto* mutableNode = graph.findNode(node.uid))
+            if (mutableNode->col >= column && ! mutableNode->isEndpoint())
+                ++mutableNode->col;
+    }
+
+    // OUT stays to the right of everything.
+    if (auto* out = graph.findNode(kOutputNodeUid))
+    {
+        int rightmost = 0;
+
+        for (const auto& node : graph.getNodes())
+            if (! node.isEndpoint())
+                rightmost = juce::jmax(rightmost, node.col);
+
+        out->col = rightmost + 1;
+    }
+}
+
+/// Resolves a lane position to a grid column, opening one if needed.
+int columnFor(Graph& graph, BlockPosition position)
+{
+    const auto occupied = columns(graph);
+
+    if (occupied.empty())
+        return 1;
+
+    if (position.stage >= static_cast<int>(occupied.size()))
+        return occupied.back() + 1;
+
+    const int existing = occupied[static_cast<size_t>(juce::jmax(0, position.stage))];
+
+    if (position.newStage || cellOccupied(graph, existing, position.row))
+    {
+        openColumn(graph, existing);
+        return existing;
+    }
+
+    return existing;
+}
+} // namespace
+
+void insertBlock(Graph& graph, std::unique_ptr<BlockInstance> block, BlockPosition position)
+{
+    if (block == nullptr)
+        return;
+
+    const auto uid = block->getUid();
+    const int column = columnFor(graph, position);
+
+    graph.addBlockNode(std::move(block), column, juce::jmax(0, position.row));
+    spliceIntoRow(graph, uid);
+}
+
+bool removeBlock(Graph& graph, const juce::String& uid)
+{
+    const auto* node = graph.findNode(uid);
+
+    if (node == nullptr || node->block == nullptr || node->isEndpoint())
+        return false;
+
+    return graph.healAround(uid);
+}
+
+bool moveBlock(Graph& graph, const juce::String& uid, BlockPosition position)
+{
+    auto* node = graph.findNode(uid);
+
+    if (node == nullptr || node->block == nullptr || node->isEndpoint())
+        return false;
+
+    // Take the block out of the path first, so the source and destination it
+    // used to join are wired to each other before we work out where it lands.
+    // Otherwise a move within the same row would splice the block back against
+    // its own stale wires.
+    auto owned = graph.releaseBlock(uid);
+    graph.healAround(uid);
+
+    if (owned == nullptr)
+        return false;
+
+    insertBlock(graph, std::move(owned), position);
+    return true;
+}
+
 } // namespace graphlane
 } // namespace blockrig

@@ -54,5 +54,32 @@ std::optional<BlockPosition> findBlock(const Graph& graph, const juce::String& u
 /// getBlockByIndex ordering so callers that walk by index are unaffected.
 BlockInstance* getBlockByIndex(const Graph& graph, int index);
 
+//==============================================================================
+// Edits. These are what BlockRigProcessor's insert/remove/move call once the
+// graph is the live model; the UI above them is untouched, because it already
+// goes through the processor rather than the chain.
+
+/// Places a block at a lane position and splices it into the signal path.
+///
+/// The splice is along the node's row: the nearest block to its left on that row
+/// becomes its source (IN if there is none), the nearest to its right becomes
+/// its destination (OUT if there is none), and the wire that previously joined
+/// those two is removed. Inserting into the middle of a chain therefore does
+/// what the lane did — the signal now goes through the new block instead of
+/// past it.
+///
+/// `position.newStage`, or a position whose cell is already occupied, inserts a
+/// fresh column and shifts everything at or after it to the right, so no two
+/// blocks ever share a cell.
+void insertBlock(Graph& graph, std::unique_ptr<BlockInstance> block, BlockPosition position);
+
+/// Removes a block and heals the gap, so the signal path closes up. Returns
+/// false if the uid is not a block node.
+bool removeBlock(Graph& graph, const juce::String& uid);
+
+/// Moves a block to a new lane position, healing the gap it left and splicing it
+/// in at the destination.
+bool moveBlock(Graph& graph, const juce::String& uid, BlockPosition position);
+
 } // namespace graphlane
 } // namespace blockrig

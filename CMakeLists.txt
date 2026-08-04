@@ -253,6 +253,8 @@ if(BLOCKRIG_BUILD_TESTS)
         tests/graph_tests.cpp
         src/host/Graph.cpp
         src/host/GraphEngine.cpp
+        src/host/GraphLane.cpp
+        src/host/BlockChain.cpp
         src/host/BlockInstance.cpp)
 
     target_include_directories(graph_tests PRIVATE src)

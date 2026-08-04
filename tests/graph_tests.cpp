@@ -10,6 +10,7 @@
 
 #include "host/Graph.h"
 #include "host/GraphEngine.h"
+#include "host/GraphLane.h"
 
 namespace
 {
@@ -926,6 +927,194 @@ void testSpilloverExpires()
     check(buffer.getMagnitude(0, kBlockSize) > 0.4f, "IN reaches OUT after the tail is gone");
 }
 
+//==============================================================================
+// Lane-shaped edits over a graph (transitional; G5 deletes this layer).
+
+std::unique_ptr<BlockInstance> makeBlockFor(const juce::String& uid, int latency = 0,
+                                            bool invert = false)
+{
+    auto plugin = std::make_unique<DelayPlugin>(latency, invert);
+    auto block = std::make_unique<BlockInstance>(std::move(plugin), uid);
+    block->prepare(kSampleRate, kBlockSize, false);
+    return block;
+}
+
+bool wired(const Graph& graph, const juce::String& from, const juce::String& to)
+{
+    for (const auto& w : graph.getWires())
+        if (w.fromUid == from && w.toUid == to)
+            return true;
+
+    return false;
+}
+
+void testLaneInsertSplices()
+{
+    std::printf("\nLane edits: insert splices into the path\n");
+
+    Graph graph;
+
+    BlockPosition append;
+    append.stage = 0;
+    append.row = 0;
+
+    graphlane::insertBlock(graph, makeBlockFor("a"), append);
+
+    check(wired(graph, kInputNodeUid, "a"), "first block: IN -> a");
+    check(wired(graph, "a", kOutputNodeUid), "first block: a -> OUT");
+    check(! wired(graph, kInputNodeUid, kOutputNodeUid),
+          "and the wire that skipped past it is gone");
+
+    // Append a second.
+    append.stage = 1;
+    graphlane::insertBlock(graph, makeBlockFor("b"), append);
+
+    check(wired(graph, "a", "b") && wired(graph, "b", kOutputNodeUid), "IN -> a -> b -> OUT");
+    check(! wired(graph, "a", kOutputNodeUid), "a no longer reaches OUT directly");
+
+    // Insert in the middle: between a and b.
+    BlockPosition middle;
+    middle.stage = 1;
+    middle.row = 0;
+    middle.newStage = true;
+
+    graphlane::insertBlock(graph, makeBlockFor("mid"), middle);
+
+    check(wired(graph, "a", "mid") && wired(graph, "mid", "b"), "a -> mid -> b");
+    check(! wired(graph, "a", "b"), "the old a -> b wire is removed, not left alongside");
+
+    // The signal must pass through everything exactly once - a leftover skip
+    // wire would sum a dry copy at the far end.
+    const auto plan = graph.compile(kBlockSize);
+    check(plan.steps.size() == 5, "IN, a, mid, b, OUT all scheduled");
+    check(plan.dormantUids.empty(), "nothing orphaned");
+
+    const auto* out = stepFor(plan, kOutputNodeUid);
+    check(out != nullptr && out->inputs.size() == 1, "OUT takes exactly one input - no dry copy");
+
+    check(graphlane::getNumStages(graph) == 3, "the lane sees three stages");
+}
+
+void testLaneRemoveHeals()
+{
+    std::printf("\nLane edits: remove heals the gap\n");
+
+    Graph graph;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        BlockPosition position;
+        position.stage = i;
+        graphlane::insertBlock(graph, makeBlockFor("n" + juce::String(i)), position);
+    }
+
+    check(wired(graph, "n0", "n1") && wired(graph, "n1", "n2"), "chain built");
+
+    check(graphlane::removeBlock(graph, "n1"), "middle block removed");
+    check(wired(graph, "n0", "n2"), "and the chain healed across the gap");
+    check(graph.findNode("n1") == nullptr, "the node is gone");
+
+    check(! graphlane::removeBlock(graph, "nonexistent"), "an unknown uid is refused");
+    check(! graphlane::removeBlock(graph, kInputNodeUid), "IN cannot be removed");
+
+    const auto plan = graph.compile(kBlockSize);
+    check(plan.dormantUids.empty(), "nothing is left dangling");
+    check(plan.steps.size() == 4, "IN, n0, n2, OUT");
+}
+
+void testLaneMoveReorders()
+{
+    std::printf("\nLane edits: move reorders without stranding wires\n");
+
+    Graph graph;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        BlockPosition position;
+        position.stage = i;
+        graphlane::insertBlock(graph, makeBlockFor("n" + juce::String(i)), position);
+    }
+
+    // Move the first block to the end.
+    BlockPosition toEnd;
+    toEnd.stage = 3;
+    toEnd.row = 0;
+
+    check(graphlane::moveBlock(graph, "n0", toEnd), "n0 moved to the end");
+
+    check(wired(graph, kInputNodeUid, "n1"), "IN now feeds what followed it");
+    check(wired(graph, "n2", "n0"), "and n0 sits after n2");
+    check(wired(graph, "n0", kOutputNodeUid), "feeding OUT");
+    check(! wired(graph, "n0", "n1"), "its old outgoing wire is gone");
+
+    const auto plan = graph.compile(kBlockSize);
+    check(plan.steps.size() == 5, "every block still renders");
+    check(plan.dormantUids.empty(), "and none was stranded by the move");
+
+    const auto* out = stepFor(plan, kOutputNodeUid);
+    check(out != nullptr && out->inputs.size() == 1, "OUT still takes one input");
+
+    // The block kept its identity and its plug-in across the move.
+    check(graph.getBlockByUid("n0") != nullptr, "the moved block kept its block");
+    check(graph.getNumBlocks() == 3, "no block was lost or duplicated");
+}
+
+void testLaneInsertOnSecondRow()
+{
+    std::printf("\nLane edits: a block on row 1 becomes a parallel branch\n");
+
+    Graph graph;
+
+    BlockPosition first;
+    first.stage = 0;
+    graphlane::insertBlock(graph, makeBlockFor("main"), first);
+
+    BlockPosition below;
+    below.stage = 0;
+    below.row = 1;
+    graphlane::insertBlock(graph, makeBlockFor("parallel"), below);
+
+    check(wired(graph, kInputNodeUid, "parallel"), "IN feeds the second row");
+    check(wired(graph, "parallel", kOutputNodeUid), "which rejoins at OUT");
+    check(wired(graph, kInputNodeUid, "main"), "the first row is untouched");
+
+    const auto plan = graph.compile(kBlockSize);
+    const auto* out = stepFor(plan, kOutputNodeUid);
+
+    check(out != nullptr && out->inputs.size() == 2, "OUT sums both branches");
+    check(plan.dormantUids.empty(), "both branches are live");
+    check(graphlane::isStageSplit(graph, 0), "and the lane reads the stage as split");
+}
+
+void testRenderAfterLaneEdits()
+{
+    std::printf("\nAudio still flows after a run of lane edits\n");
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    for (int i = 0; i < 4; ++i)
+    {
+        BlockPosition position;
+        position.stage = i;
+        graphlane::insertBlock(graph, makeBlockFor("n" + juce::String(i)), position);
+    }
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    check(peakAfterPriming(engine, 6, 1) > 0.1f, "audio reaches OUT through four blocks");
+
+    graphlane::removeBlock(graph, "n1");
+    BlockPosition toFront;
+    toFront.stage = 0;
+    toFront.newStage = true;
+    graphlane::moveBlock(graph, "n3", toFront);
+    engine.publish();
+
+    check(peakAfterPriming(engine, 6, 1) > 0.1f, "and still does after a remove and a move");
+    check(engine.getGraph().getNumBlocks() == 3, "three blocks remain");
+}
+
 } // namespace
 
 int main()
@@ -950,6 +1139,11 @@ int main()
     testGraphOwnsItsBlocks();
     testSpilloverKeepsTopology();
     testSpilloverExpires();
+    testLaneInsertSplices();
+    testLaneRemoveHeals();
+    testLaneMoveReorders();
+    testLaneInsertOnSecondRow();
+    testRenderAfterLaneEdits();
 
     std::printf("\n%s (%d failure%s)\n",
                 gFailures == 0 ? "ALL PASSED" : "FAILURES",
