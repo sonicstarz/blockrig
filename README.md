@@ -25,7 +25,7 @@ state.
 | P8 Utility blocks + error tiles | Built |
 | P9 Editing quality of life | Built (undo/redo, favourites, copy/paste) |
 | P10 Setlists, gig view, MIDI phase 2 | Built |
-| P11 Spillover | Built |
+| P11 Spillover | Partly built — snapshot ducking + per-block tails ring out; rig-switch spillover not built |
 | P12 Ship (signing, notarization, DMG) | Not started |
 
 Beyond v1: [docs/19-GRAPH-ENGINE.md](docs/19-GRAPH-ENGINE.md) plans replacing the lane/stage model
@@ -65,7 +65,11 @@ Diagnostics live behind CLI flags on the standalone app: `--scan`, `--audio-chec
 
 ## Licensing
 
-All permissive: NeuralAmpModelerCore MIT (must link `WHOLE_ARCHIVE` — see archived research),
-VST3 SDK MIT (Steinberg relicense, Nov 2025 — attribution required), AU via Apple system API,
-Eigen MPL-2.0, JUCE Starter/AGPL/commercial (choose at release), melatonin modules MIT. No VST2
-hosting (legally closed). Kushview Element is GPL: reference only, never copy.
+**BlockRig is licensed under the GNU AGPLv3** — see [LICENSE](LICENSE). This follows JUCE's free
+tier, which requires derived source be AGPLv3 or GPLv3; releasing under anything more permissive
+would mean buying a JUCE Indie/Pro licence first.
+
+Dependencies are all compatible: NeuralAmpModelerCore MIT (must link `WHOLE_ARCHIVE` — see
+archived research), VST3 SDK MIT (Steinberg relicense, Nov 2025 — attribution required), AU via
+Apple system API, Eigen MPL-2.0, melatonin modules MIT. No VST2 hosting (legally closed).
+Kushview Element is GPL: reference only, never copy.

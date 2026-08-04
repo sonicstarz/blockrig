@@ -107,7 +107,12 @@ these paths.
 
 **Done when:** every bullet has a yes/no answer written back into this file.
 
-## P8 — Built-in utility blocks + error tiles
+## P8 — Built-in utility blocks + error tiles — **BUILT (2026-07-30, `07f1a2f`)**
+
+Delivered: `blocks/ir/` (IR block + `IrLibrary`), `blocks/eq/`, `blocks/utility/`, metronome in
+`host/Transport`, error tiles in `ui/LaneView`. Acceptance ("a rig of NAM → IR → EQ → utility runs
+with zero third-party plugins") is verified by build and tests; the degrade/reinstate cycle wants
+a live pass in P7.
 
 Extend `host/InternalBlockFormat` (pattern: `blocks/nam/NamBlockProcessor` is the
 reference internal plugin — `AudioPluginInstance` subclass, APVTS parameters,
@@ -136,7 +141,10 @@ reference internal plugin — `AudioPluginInstance` subclass, APVTS parameters,
 deleting a plugin from disk degrades its tile instead of silently dropping it, and
 reinstalling restores it with state.
 
-## P9 — Editing quality of life
+## P9 — Editing quality of life — **BUILT (2026-07-30, `207f364`)**
+
+Delivered: `state/UndoHistory`, `state/BlockFavorites`, clipboard copy/paste-after in
+`ui/LaneView`, and per-snapshot "Edit what's saved…" in `ui/SnapshotStrip`.
 
 - **Undo/redo**: ring buffer of serialized rigs (`rigstate::toValueTree` — already
   cheap enough that the dirty checker runs it). Snapshot the tree before every
@@ -156,7 +164,11 @@ reinstalling restores it with state.
 **Done when:** ⌘Z survives add/remove/move/param-change round-trips with windows
 open; a favorited Valhalla preset drops into a different rig with settings intact.
 
-## P10 — Stage story: setlists, gig view, MIDI phase 2
+## P10 — Stage story: setlists, gig view, MIDI phase 2 — **BUILT (2026-07-30, `492501b`)**
+
+Delivered: `state/Setlist`, `ui/GigView`, MIDI clock follow (`MidiEngine::setFollowMidiClock`),
+per-mapping channel filters and expression ranges. The acceptance test is a hands-free two-song
+set from a floor controller — **hardware, so it belongs to P7.**
 
 - **Setlists**: ordered lists of rig files (`…/BlockRig/Setlists/*.blockset`, JSON
   array of rig paths + names). Home screen gains a Setlists tab; the rig header
@@ -175,7 +187,21 @@ open; a favorited Valhalla preset drops into a different rig with settings intac
 rigs (or snapshots per setting), expression rides a mapped parameter, gig view
 readable from standing height.
 
-## P11 — Spillover (the flagship, hardest last)
+## P11 — Spillover (the flagship, hardest last) — **PARTLY BUILT (2026-07-30, `837c04e`)**
+
+**Built:** snapshot ducking (`state/Snapshots.cpp` — the dip falls while states land beneath it),
+and per-block tail spillover in `BlockChain` — a removed block moves to one of 12 `TailSlot`s and
+is silence-fed for `mTailCarrySeconds` (4 s) with a linear fade, freed only after the audio
+thread clears the slot.
+
+**Deliberate compromise, documented in `BlockChain.h`:** retired blocks render *alone*, so a delay
+that fed an amp tails out dry. Rendering the retired graph with topology intact would double-
+process instances shared with the new snapshot and corrupt their state.
+
+**Not built:** rig-switch spillover — the outgoing chain does not keep rendering into a tail bus
+across a rig change (`MainView::loadRigFile` swaps directly). The acceptance criterion below
+therefore stands half-met: snapshot tails ring, rig-change tails do not. The audible check at 128
+samples is a P7 item either way.
 
 Goal: switching snapshots or rigs lets delay/reverb tails ring out instead of
 cutting. This is the Helix-Stadium-headline feature; GP calls it Patch Persist.
