@@ -271,6 +271,31 @@ if(BLOCKRIG_BUILD_TESTS)
         juce::juce_dsp
         juce::juce_recommended_config_flags)
 
+    # Schema migration tests (docs/19 G2). Pure ValueTree transforms, so no
+    # hosting and no models — fixtures only.
+    juce_add_console_app(migration_tests PRODUCT_NAME "migration_tests")
+
+    target_sources(migration_tests PRIVATE
+        tests/migration_tests.cpp
+        src/state/RigMigration.cpp
+        src/host/Graph.cpp
+        src/host/BlockInstance.cpp)
+
+    target_include_directories(migration_tests PRIVATE src)
+
+    target_compile_definitions(migration_tests PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STANDALONE_APPLICATION=1)
+
+    # RigState.h (for the v1 schema ids) includes juce_audio_processors, which is
+    # why this needs more than juce_data_structures despite being a pure
+    # ValueTree transform.
+    target_link_libraries(migration_tests PRIVATE
+        juce::juce_audio_processors
+        juce::juce_data_structures
+        juce::juce_recommended_config_flags)
+
     # Chain engine tests: real hosted plug-ins, live edits, CPU attribution.
     juce_add_console_app(chain_tests PRODUCT_NAME "chain_tests")
 
@@ -404,6 +429,7 @@ if(BLOCKRIG_BUILD_TESTS)
     add_test(NAME dsp_tests
              COMMAND dsp_tests "${NAM_CORE_DIR}/example_models")
     add_test(NAME graph_tests COMMAND graph_tests)
+    add_test(NAME migration_tests COMMAND migration_tests)
     add_test(NAME chain_tests
              COMMAND chain_tests "${NAM_CORE_DIR}/example_models")
     add_test(NAME rig_tests

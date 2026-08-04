@@ -26,6 +26,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout UtilityBlockProcessor::creat
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"swap", 1},
                                                           "Swap channels", false));
 
+    // Sums the two channels to mono before pan places the result. This is what
+    // lets one branch of a graph split behave like a dualMono row did in the
+    // lane: summed to mono, then panned hard to one side. Without it a hard pan
+    // only attenuates the far channel, leaving whatever was already on the near
+    // one — which is not the same sound. See docs/19 §3.
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"sumToMono", 1},
+                                                          "Sum to mono", false));
+
     return layout;
 }
 
@@ -70,6 +78,18 @@ void UtilityBlockProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
             buffer.setSample(0, i, buffer.getSample(1, i));
             buffer.setSample(1, i, left);
         }
+
+    // Sum before pan, so a hard-panned branch carries the whole signal rather
+    // than only what happened to be on that side.
+    if (boolValue("sumToMono") && numChannels >= 2)
+    {
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const auto summed = 0.5f * (buffer.getSample(0, i) + buffer.getSample(1, i));
+            buffer.setSample(0, i, summed);
+            buffer.setSample(1, i, summed);
+        }
+    }
 
     // Constant-power pan: -3 dB in the centre, so sweeping does not change how
     // loud the block feels.
