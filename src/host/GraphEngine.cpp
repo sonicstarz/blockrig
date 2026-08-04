@@ -43,20 +43,29 @@ void GraphEngine::publish()
     delete previous;
 }
 
-bool GraphEngine::retireWithTail(std::unique_ptr<BlockInstance> block,
-                                 const juce::String& uid,
-                                 double seconds)
+bool GraphEngine::retireWithTail(const juce::String& uid, double seconds)
 {
     auto* node = mGraph.findNode(uid);
 
     if (node == nullptr || node->isEndpoint())
         return false;
 
-    if (seconds <= 0.0 || ! mPrepared)
+    if (seconds <= 0.0 || ! mPrepared || node->block == nullptr)
     {
         mGraph.healAround(uid);
         publish();
         return true;
+    }
+
+    // The block has to outlive its node, so take it off the graph's books
+    // before the node's window starts closing.
+    auto block = mGraph.releaseBlock(uid);
+
+    if (block == nullptr)
+    {
+        // Not graph-owned — a caller keeping its own storage. Tail anyway; the
+        // node keeps rendering and the caller keeps the lifetime.
+        block = nullptr;
     }
 
     // Cut the inputs but keep the outputs: from here the node renders silence

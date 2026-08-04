@@ -45,10 +45,94 @@ const GraphNode* Graph::findNode(const juce::String& uid) const
     return nullptr;
 }
 
+void Graph::addBlockNode(std::unique_ptr<BlockInstance> block, int col, int row)
+{
+    if (block == nullptr || hasNode(block->getUid()))
+        return;
+
+    GraphNode node;
+    node.uid = block->getUid();
+    node.col = col;
+    node.row = row;
+    node.block = block.get();
+    node.latencySamples = block->getLatencySamples();
+
+    mOwnedBlocks.push_back(std::move(block));
+    mNodes.push_back(std::move(node));
+}
+
+std::unique_ptr<BlockInstance> Graph::releaseBlock(const juce::String& uid)
+{
+    auto* node = findNode(uid);
+
+    if (node == nullptr || node->block == nullptr)
+        return nullptr;
+
+    for (auto it = mOwnedBlocks.begin(); it != mOwnedBlocks.end(); ++it)
+    {
+        if (it->get() != node->block)
+            continue;
+
+        auto released = std::move(*it);
+        mOwnedBlocks.erase(it);
+        return released;
+    }
+
+    // The node pointed at a block the graph never owned — the raw-pointer form
+    // used by tests and by anything that keeps its own storage.
+    return nullptr;
+}
+
+void Graph::freeBlockFor(const juce::String& uid)
+{
+    const auto* node = findNode(uid);
+
+    if (node == nullptr || node->block == nullptr)
+        return;
+
+    for (auto it = mOwnedBlocks.begin(); it != mOwnedBlocks.end(); ++it)
+    {
+        if (it->get() == node->block)
+        {
+            mOwnedBlocks.erase(it);
+            return;
+        }
+    }
+}
+
+BlockInstance* Graph::getBlockByUid(const juce::String& uid) const
+{
+    const auto* node = findNode(uid);
+    return node != nullptr ? node->block : nullptr;
+}
+
+std::vector<BlockInstance*> Graph::getBlocks() const
+{
+    std::vector<BlockInstance*> result;
+
+    for (const auto& node : mNodes)
+        if (node.block != nullptr && ! node.isTailing)
+            result.push_back(node.block);
+
+    return result;
+}
+
+int Graph::getNumBlocks() const
+{
+    int count = 0;
+
+    for (const auto& node : mNodes)
+        if (node.block != nullptr && ! node.isTailing)
+            ++count;
+
+    return count;
+}
+
 void Graph::clear()
 {
     mNodes.clear();
     mWires.clear();
+    mOwnedBlocks.clear();
 
     GraphNode in;
     in.uid = kInputNodeUid;
@@ -135,6 +219,10 @@ bool Graph::removeNode(const juce::String& uid)
 
     if (node == nullptr || node->isEndpoint())
         return false;
+
+    // Frees the block if the graph owns it. A block released beforehand — a tail
+    // ringing out — is untouched, because it is no longer in mOwnedBlocks.
+    freeBlockFor(uid);
 
     mWires.erase(std::remove_if(mWires.begin(), mWires.end(),
                                 [&uid](const GraphWire& wire)

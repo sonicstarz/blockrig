@@ -379,7 +379,7 @@ constexpr int kBlockSize = 128;
 /// `reportedLatency` exists so a test can build the honest failure mode — a
 /// plug-in that delays but under-reports, leaving the compiler nothing to
 /// compensate. Pass -1 (the default) for a plug-in that tells the truth.
-class DelayPlugin final : public juce::AudioPluginInstance
+class DelayPlugin : public juce::AudioPluginInstance
 {
 public:
     DelayPlugin(int latencySamples, bool invert, int reportedLatency = -1)
@@ -715,6 +715,95 @@ void testPlanSwapWhileRendering()
     check(engine.getGraph().getNodes().size() == 3, "the graph is back to IN, a, OUT");
 }
 
+/// A BlockInstance that reports when it is destroyed, so ownership can be
+/// asserted rather than assumed.
+struct DeathWatch
+{
+    static int destroyed;
+};
+
+int DeathWatch::destroyed = 0;
+
+class WatchedPlugin final : public DelayPlugin
+{
+public:
+    WatchedPlugin() : DelayPlugin(0, false) {}
+    ~WatchedPlugin() override { ++DeathWatch::destroyed; }
+};
+
+void testGraphOwnsItsBlocks()
+{
+    std::printf("\nThe graph owns its blocks\n");
+
+    DeathWatch::destroyed = 0;
+
+    {
+        Graph graph;
+
+        auto plugin = std::make_unique<WatchedPlugin>();
+        auto block = std::make_unique<BlockInstance>(std::move(plugin), "owned");
+        block->prepare(kSampleRate, kBlockSize, false);
+
+        graph.addBlockNode(std::move(block), 1, 0);
+
+        check(graph.getNumBlocks() == 1, "the block is counted");
+        check(graph.getBlockByUid("owned") != nullptr, "and reachable by uid");
+        check(graph.getBlocks().size() == 1, "and listed");
+        check(graph.findNode("owned") != nullptr, "its node exists");
+        check(DeathWatch::destroyed == 0, "nothing freed yet");
+
+        // Removing the node frees the block it owns.
+        graph.removeNode("owned");
+        check(DeathWatch::destroyed == 1, "removing the node frees the block");
+        check(graph.getNumBlocks() == 0, "and the count drops");
+    }
+
+    // Releasing hands ownership back out, so the block outlives the graph.
+    DeathWatch::destroyed = 0;
+
+    std::unique_ptr<BlockInstance> escaped;
+
+    {
+        Graph graph;
+
+        auto plugin = std::make_unique<WatchedPlugin>();
+        auto block = std::make_unique<BlockInstance>(std::move(plugin), "released");
+        block->prepare(kSampleRate, kBlockSize, false);
+        graph.addBlockNode(std::move(block), 1, 0);
+
+        escaped = graph.releaseBlock("released");
+        check(escaped != nullptr, "releaseBlock hands the block back");
+
+        graph.removeNode("released");
+        check(DeathWatch::destroyed == 0, "a released block is not freed by the graph");
+    }
+
+    check(DeathWatch::destroyed == 0, "nor when the graph goes away");
+    escaped.reset();
+    check(DeathWatch::destroyed == 1, "the caller owns it now");
+
+    // clear() frees everything the graph still owns.
+    DeathWatch::destroyed = 0;
+
+    {
+        Graph graph;
+
+        for (int i = 0; i < 3; ++i)
+        {
+            auto plugin = std::make_unique<WatchedPlugin>();
+            auto block = std::make_unique<BlockInstance>(std::move(plugin),
+                                                         "n" + juce::String(i));
+            block->prepare(kSampleRate, kBlockSize, false);
+            graph.addBlockNode(std::move(block), i + 1, 0);
+        }
+
+        check(graph.getNumBlocks() == 3, "three blocks owned");
+        graph.clear();
+        check(DeathWatch::destroyed == 3, "clear() frees all three");
+        check(graph.getNodes().size() == 2, "and leaves a bare IN and OUT");
+    }
+}
+
 void testSpilloverKeepsTopology()
 {
     std::printf("\nSpillover: a tail rings out through what it fed\n");
@@ -754,12 +843,9 @@ void testSpilloverKeepsTopology()
 
     engine.process(buffer, midi);
 
-    // Now retire verb with a one-second tail. The BlockInstance it owns is the
-    // one already in the graph, so hand ownership over rather than duplicating.
-    auto owned = std::move(pool.blocks[0]);
-    pool.blocks.erase(pool.blocks.begin());
-
-    check(engine.retireWithTail(std::move(owned), "verb", 1.0), "verb retired with a tail");
+    // Retire verb with a one-second tail. The engine takes the block off the
+    // graph's books itself.
+    check(engine.retireWithTail("verb", 1.0), "verb retired with a tail");
     check(engine.getNumTailingBlocks() == 1, "one block is ringing out");
 
     // Silence in from here. Anything that comes out is tail.
@@ -816,12 +902,9 @@ void testSpilloverExpires()
     juce::AudioBuffer<float> buffer(2, kBlockSize);
     juce::MidiBuffer midi;
 
-    auto owned = std::move(pool.blocks[0]);
-    pool.blocks.erase(pool.blocks.begin());
-
     // A short window: two blocks' worth.
     const double seconds = (2.0 * kBlockSize) / kSampleRate;
-    engine.retireWithTail(std::move(owned), "verb", seconds);
+    engine.retireWithTail("verb", seconds);
 
     check(engine.getGraph().findNode("verb") != nullptr, "the node stays while it rings");
 
@@ -864,6 +947,7 @@ int main()
     testRenderFanInSums();
     testNullOnAlignedBranches();
     testPlanSwapWhileRendering();
+    testGraphOwnsItsBlocks();
     testSpilloverKeepsTopology();
     testSpilloverExpires();
 

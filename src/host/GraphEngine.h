@@ -54,9 +54,10 @@ public:
     ///
     /// `seconds` of 0 removes immediately. Returns false if the uid is not a
     /// removable node.
-    bool retireWithTail(std::unique_ptr<BlockInstance> block,
-                        const juce::String& uid,
-                        double seconds);
+    ///
+    /// Ownership of the block is taken from the graph, so callers do not have to
+    /// track lifetimes across the tail window.
+    bool retireWithTail(const juce::String& uid, double seconds);
 
     /// How many blocks are currently ringing out. For the CPU meter, which has
     /// to be honest that a tail costs real work.

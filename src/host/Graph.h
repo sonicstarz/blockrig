@@ -173,9 +173,28 @@ public:
 
     void addNode(GraphNode node);
 
-    /// Back to a bare IN and OUT, unconnected. Used by the loader before
-    /// rebuilding from a document.
+    /// Adds a node that owns its block. The graph is the owner from here: the
+    /// lane's job of keeping BlockInstances alive moves here wholesale, which is
+    /// what lets a node be removed without the caller tracking lifetimes.
+    ///
+    /// The block must already be prepared.
+    void addBlockNode(std::unique_ptr<BlockInstance> block, int col, int row);
+
+    /// Hands a block back out, leaving the node in place but blockless. Used by
+    /// spillover, which needs the block to outlive its node.
+    std::unique_ptr<BlockInstance> releaseBlock(const juce::String& uid);
+
+    /// Back to a bare IN and OUT, unconnected. Frees every owned block. Used by
+    /// the loader before rebuilding from a document.
     void clear();
+
+    //==============================================================================
+    // Block access. Position-agnostic, which is most of what the app asks the
+    // lane for today — uid lookups and whole-list walks, not stage/row queries.
+
+    BlockInstance* getBlockByUid(const juce::String& uid) const;
+    std::vector<BlockInstance*> getBlocks() const;
+    int getNumBlocks() const;
 
     /// Removes the node and every wire touching it. Endpoints refuse removal.
     /// Does not heal the gap — the caller decides whether a removal heals
@@ -215,6 +234,12 @@ public:
 private:
     std::vector<GraphNode> mNodes;
     std::vector<GraphWire> mWires;
+
+    /// Blocks the graph owns. A node's `block` pointer aims into this; removing
+    /// a node frees its entry unless the block was released first.
+    std::vector<std::unique_ptr<BlockInstance>> mOwnedBlocks;
+
+    void freeBlockFor(const juce::String& uid);
 
     bool hasNode(const juce::String& uid) const;
 
