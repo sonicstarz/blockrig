@@ -27,8 +27,12 @@ thread never allocates, removed blocks ring out — stays true.
   whole left/right edge of the chip — no fiddly pin targets at stage distance.
 
 ### Wires
-- `wire = { fromUid, toUid }`, always output → input, always column-increasing
-  (see Grid). Unity gain, no per-wire processing.
+- `wire = { fromUid, fromPort, toUid, toPort }`, always output → input, always
+  column-increasing (see Grid). Unity gain, no per-wire processing. Ports are
+  ints defaulting to 0; v1 only ever writes 0, but they exist from the first
+  schema bump so multi-out nodes (Split L/R, crossover) arrive without a second
+  breaking migration. **Decided 2026-08-04** — resolves the contradiction
+  between this section's "ports are arrays" and §3's original uid-pair wire.
 - **Fan-out is free**: one output may feed any number of inputs. This is the
   splitter. No splitter block needed for signal fan-out.
 - **Fan-in sums**: any input may receive any number of wires; they are summed
@@ -56,9 +60,14 @@ thread never allocates, removed blocks ring out — stays true.
   negotiation. Renegotiation still runs under `suspendAudio`.
 - **Latency alignment**: parallel branches can carry different plugin latency.
   The compiler computes per-path latency and inserts alignment delays at each
-  fan-in so branches stay phase-coherent — this is new (the A/B model mostly
-  dodged it) and is the main DSP correctness risk. Total graph latency
-  publishes to the host exactly as `mPublishedLatency` does today.
+  fan-in so branches stay phase-coherent. Total graph latency publishes to the
+  host exactly as `mPublishedLatency` does today.
+  **Correction (2026-08-04): this is not new.** `BlockChain.cpp:539-550` already
+  pads every shorter row up to the longest (`row.padSamples = stage.latency -
+  row.latency`) through a per-row delay line owned by the snapshot. G1
+  generalizes proven code from per-stage to per-path; it does not invent it.
+  The null test still gates the phase, but this is a port with a reference
+  implementation, not the blank-page risk this doc originally called it.
 
 ## 2. Engine
 
@@ -82,11 +91,30 @@ The proven machinery is kept whole; only the compiled shape changes.
 ## 3. Schema (docs/14 bump — breaking shape change)
 
 - `lane { stages { rows { blocks } } }` → `graph { nodes[], wires[] }`; node
-  gains `col`, `row`; wires are uid pairs. `schemaVersion` bumps.
+  gains `col`, `row`; wires carry `fromUid`/`fromPort`/`toUid`/`toPort`.
+  `schemaVersion` bumps 1 → 2.
+- **Write migrations against `state/RigState.cpp`, not `docs/14-SCHEMA.md`.**
+  That doc still describes "v1: exactly one Row per Stage" with `<Snapshots/>`
+  and `<Mappings/>` reserved and empty; all three shipped and the version never
+  bumped (additive, correct per policy). Fixtures built from the doc would
+  encode a shape that has not existed since July. Refresh docs/14 in G2.
 - **Migration is deterministic and fixture-tested** (per docs/14 policy):
   - linear chain → one row of nodes, consecutive wires
   - split stage → fan-out from the previous node into row 0 / row 1 chains,
     fan-in at the next node
+  - **`StageMode::dualMono` must not silently become a parallel sum.** Today a
+    dualMono stage renders each row mono and places row A hard left, row B hard
+    right (`BlockChain.cpp:82-88`, `:748-799`); rows also carry `gainDb`/`pan`
+    (`RigState.cpp:110-115`). A bare fan-in sum loses all of it, turning saved
+    dual-amp stereo rigs into a centred mono-ish sum on first open.
+    **Decided 2026-08-04:** `UtilityBlockProcessor` gains a `sumToMono`
+    parameter (it has gain/pan/invert/swap but no mono sum, so it cannot
+    reproduce dualMono as built), and migration inserts a Utility node on each
+    branch of a dualMono split — sum-to-mono on, panned hard L / hard R,
+    carrying that row's old `gainDb`/`pan`. Wires stay dumb, and the result is
+    visible and editable on the canvas rather than hidden in wire metadata.
+    A `parallel` stage needs a Utility node only when its row had non-default
+    gain or pan.
   - fixtures: empty rig, linear, one split stage, split with uneven branch
     lengths, split at chain start/end, the current user rigs in test corpus.
 - Scenes (uid → state) and MIDI mappings (uid-keyed) survive untouched.
@@ -154,9 +182,14 @@ category chips, amber wires, names beneath), new interaction model.
 
 ## 7. Risks & open questions
 
-- **Latency alignment correctness** is the deep risk — G1's null test is the
-  gate. Until it passes, parallel paths with latency-reporting plugins would
-  comb-filter exactly like the competition's cheaper hosts do.
+- **Latency alignment correctness** is still gated by G1's null test, but see
+  the correction in §1: the per-row padding already works and is being
+  generalized, not written from scratch.
+- **The `BlockPosition` adapter is the real G1 cost.** `{stage, row, index}` has
+  51 references across 10 files — `LaneView`, `BlockRigProcessor`,
+  `StandaloneApp`, `RigState`, and both test suites. G1 keeps the BlockChain
+  interface, so the graph has to answer stage/row/index questions until G5
+  retires them.
 - **Sum headroom**: implicit fan-in can clip where the old A/B averaged.
   Decision: sum at unity (industry norm for parallel paths), rely on meters +
   the Utility trim; revisit only if real rigs clip.
