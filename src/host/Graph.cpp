@@ -266,9 +266,42 @@ RenderPlan Graph::compile(int maxBlockSize) const
     // canvas. Parking a lead sound off to the side is a feature.
     std::set<juce::String> live;
 
+    // Signal originates at IN and at every tailing node — a tail has had its
+    // inputs cut, so IN cannot reach it, but it is still a source of audio.
+    //
+    // Testing reachability from IN alone is wrong in a way that is easy to miss:
+    // cutting a tail's input also orphans everything *downstream* of it, so a
+    // rig whose only path ran through the retired block would fall silent the
+    // instant it started ringing out. The tail must light its own downstream.
+    std::vector<juce::String> sources{kInputNodeUid};
+
+    for (const auto& node : mNodes)
+        if (node.isTailing)
+            sources.push_back(node.uid);
+
+    const auto reachableFromAnySource = [&](const juce::String& uid)
+    {
+        for (const auto& source : sources)
+            if (reaches(source, uid))
+                return true;
+
+        return false;
+    };
+
     for (const auto& uid : *order)
-        if (reaches(kInputNodeUid, uid) && reaches(uid, kOutputNodeUid))
+    {
+        // The endpoints always run: OUT has to emit something even when nothing
+        // feeds it, and IN has to publish the incoming audio even when nothing
+        // consumes it.
+        if (uid == kInputNodeUid || uid == kOutputNodeUid)
+        {
             live.insert(uid);
+            continue;
+        }
+
+        if (reachableFromAnySource(uid) && reaches(uid, kOutputNodeUid))
+            live.insert(uid);
+    }
 
     for (const auto& node : mNodes)
         if (live.count(node.uid) == 0)
@@ -347,6 +380,7 @@ RenderPlan Graph::compile(int maxBlockSize) const
         PlanStep step;
         step.uid = uid;
         step.block = node->block;
+        step.tailSamplesLeft = node->tailSamplesLeft;
 
         for (const auto& wire : mWires)
         {

@@ -43,6 +43,25 @@ public:
     /// Recompiles and publishes. Cheap enough to call after every edit.
     void publish();
 
+    /// Removes a block from the signal path but keeps it rendering, silence-fed,
+    /// into the destinations it used to feed — so its delay or reverb rings out
+    /// instead of cutting dead. Takes ownership of the block for the tail's
+    /// duration.
+    ///
+    /// Unlike the lane's version, the tail passes through whatever is downstream
+    /// of it: a delay that fed an amp still tails out through that amp, because
+    /// the node never leaves the graph until its window closes.
+    ///
+    /// `seconds` of 0 removes immediately. Returns false if the uid is not a
+    /// removable node.
+    bool retireWithTail(std::unique_ptr<BlockInstance> block,
+                        const juce::String& uid,
+                        double seconds);
+
+    /// How many blocks are currently ringing out. For the CPU meter, which has
+    /// to be honest that a tail costs real work.
+    int getNumTailingBlocks() const noexcept { return static_cast<int>(mTails.size()); }
+
     /// Frees plans the audio thread has finished with. Call from a timer, the
     /// same way the lane drains its retirement queue.
     void collectGarbage();
@@ -73,9 +92,31 @@ private:
     /// Plans the audio thread has swapped out, waiting for the message thread to
     /// delete them. Freeing on the audio thread is exactly what this avoids.
     std::atomic<RenderPlan*> mRetiredPlan{nullptr};
-    std::vector<std::unique_ptr<RenderPlan>> mGarbage;
+
+    /// Counts plans reclaimed in collectGarbage(). A tail's block is safe to
+    /// free once this has advanced past the value recorded when the tail left
+    /// the graph — see the comment there.
+    int mRetirementsSeen = 0;
 
     std::atomic<int> mPublishedLatency{0};
+
+    /// A block ringing out. Held by unique_ptr so `samplesLeft` keeps a stable
+    /// address: published plans point straight at it.
+    struct Tail
+    {
+        std::unique_ptr<BlockInstance> block;
+        juce::String uid;
+        std::atomic<int> samplesLeft{0};
+
+        /// mRetirementsSeen at the moment this tail left the graph.
+        int retirementMark = 0;
+    };
+
+    std::vector<std::unique_ptr<Tail>> mTails;
+
+    /// Expired tails wait one collectGarbage() cycle before being freed, so a
+    /// plan still referencing them has been retired first.
+    std::vector<std::unique_ptr<Tail>> mExpiredTails;
 
     /// Sums one branch into `destination`, applying its alignment delay if it
     /// has one. The delay line is the same circular buffer the lane uses for

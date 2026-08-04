@@ -43,12 +43,123 @@ void GraphEngine::publish()
     delete previous;
 }
 
+bool GraphEngine::retireWithTail(std::unique_ptr<BlockInstance> block,
+                                 const juce::String& uid,
+                                 double seconds)
+{
+    auto* node = mGraph.findNode(uid);
+
+    if (node == nullptr || node->isEndpoint())
+        return false;
+
+    if (seconds <= 0.0 || ! mPrepared)
+    {
+        mGraph.healAround(uid);
+        publish();
+        return true;
+    }
+
+    // Cut the inputs but keep the outputs: from here the node renders silence
+    // through whatever it used to feed.
+    //
+    // The live path has to heal in the same breath. Removing a block mid-chain
+    // and only cutting its input would leave everything downstream fed by the
+    // dying tail alone — the rig would duck for the length of the tail and then
+    // fall silent. So the sources reconnect straight to the destinations, and
+    // for the tail's duration the destination sums both: the live signal, and
+    // the retired block ringing out into it.
+    std::vector<juce::String> sources;
+    std::vector<juce::String> destinations;
+
+    for (const auto& wire : mGraph.wiresAt(uid))
+    {
+        if (wire.toUid == uid)
+            sources.push_back(wire.fromUid);
+        else
+            destinations.push_back(wire.toUid);
+    }
+
+    for (const auto& wire : mGraph.wiresAt(uid))
+        if (wire.toUid == uid)
+            mGraph.removeWire(wire);
+
+    for (const auto& source : sources)
+    {
+        for (const auto& destination : destinations)
+        {
+            GraphWire healed;
+            healed.fromUid = source;
+            healed.toUid = destination;
+            mGraph.addWire(healed); // refuses duplicates and cycles on its own
+        }
+    }
+
+    auto tail = std::make_unique<Tail>();
+    tail->block = std::move(block);
+    tail->uid = uid;
+    tail->samplesLeft.store(static_cast<int>(seconds * mSampleRate), std::memory_order_release);
+
+    node->isTailing = true;
+    node->tailSamplesLeft = &tail->samplesLeft;
+
+    mTails.push_back(std::move(tail));
+
+    publish();
+    return true;
+}
+
 void GraphEngine::collectGarbage()
 {
+    // 1. Reclaim any plan the audio thread has finished with. Deleting here on
+    //    the message thread is the whole point of the retirement slot.
     if (auto* retired = mRetiredPlan.exchange(nullptr, std::memory_order_acq_rel))
-        mGarbage.emplace_back(retired);
+    {
+        delete retired;
+        ++mRetirementsSeen;
+    }
 
-    mGarbage.clear();
+    // 2. Free expired tails whose plan is provably gone. A tail's block cannot
+    //    be freed the moment its window closes: the plan the audio thread is
+    //    *still running* contains a step pointing at that block, and at the
+    //    atomic counter living beside it. Only once a retirement has been seen
+    //    after the tail left the graph has the audio thread adopted a plan
+    //    without it. Getting this wrong is a use-after-free on the audio thread
+    //    that would only show up under load.
+    for (auto it = mExpiredTails.begin(); it != mExpiredTails.end();)
+    {
+        if (mRetirementsSeen > (*it)->retirementMark)
+            it = mExpiredTails.erase(it);
+        else
+            ++it;
+    }
+
+    // 3. Tails whose window has closed leave the graph and start that wait.
+    bool removedAny = false;
+
+    for (auto it = mTails.begin(); it != mTails.end();)
+    {
+        if ((*it)->samplesLeft.load(std::memory_order_acquire) > 0)
+        {
+            ++it;
+            continue;
+        }
+
+        if (auto* node = mGraph.findNode((*it)->uid))
+        {
+            // A plain removal: the live path was already healed when the tail
+            // started, so there is nothing left to reconnect.
+            node->tailSamplesLeft = nullptr;
+            mGraph.removeNode((*it)->uid);
+        }
+
+        (*it)->retirementMark = mRetirementsSeen;
+        mExpiredTails.push_back(std::move(*it));
+        it = mTails.erase(it);
+        removedAny = true;
+    }
+
+    if (removedAny)
+        publish();
 }
 
 void GraphEngine::addBranch(juce::AudioBuffer<float>& destination,
@@ -147,6 +258,20 @@ void GraphEngine::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
                       plan.buffers[static_cast<size_t>(input.bufferIndex)],
                       delay,
                       numSamples);
+        }
+
+        if (step.tailSamplesLeft != nullptr)
+        {
+            // A ringing-out block. Once its window closes we stop calling it and
+            // leave the buffer silent, so it costs nothing while the message
+            // thread gets round to reclaiming it.
+            const int remaining = step.tailSamplesLeft->load(std::memory_order_acquire);
+
+            if (remaining <= 0)
+                continue;
+
+            step.tailSamplesLeft->store(juce::jmax(0, remaining - numSamples),
+                                        std::memory_order_release);
         }
 
         if (step.block != nullptr)

@@ -49,6 +49,22 @@ struct GraphNode
     /// without instantiating a single plug-in.
     int latencySamples = 0;
 
+    /// A removed block that is ringing out. Its incoming wires are gone, so it
+    /// is fed silence, but it keeps the wires to its former destinations — so a
+    /// delay that fed an amp tails out *through* that amp.
+    ///
+    /// This is what the lane could not do: BlockChain renders each retired block
+    /// alone, because a retired snapshot sharing instances with the live one
+    /// would process them twice. Here the tailing node is simply still in the
+    /// graph, so topology costs nothing extra and the compiler needs no special
+    /// case beyond exempting it from IN-reachability.
+    bool isTailing = false;
+
+    /// Owned by GraphEngine, stable for the node's lifetime. The audio thread
+    /// counts this down; at zero the block stops being processed and the
+    /// message thread reclaims it.
+    std::atomic<int>* tailSamplesLeft = nullptr;
+
     bool isEndpoint() const noexcept { return uid == kInputNodeUid || uid == kOutputNodeUid; }
 };
 
@@ -94,6 +110,11 @@ struct PlanStep
 
     /// Buffer this step writes its output into.
     int outputBuffer = 0;
+
+    /// Non-null for a tailing node. The audio thread decrements it each block
+    /// and stops calling the block once it reaches zero, leaving the step's
+    /// buffer silent.
+    std::atomic<int>* tailSamplesLeft = nullptr;
 };
 
 /// A delay line sized and cleared at compile time on the message thread; the

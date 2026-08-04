@@ -715,6 +715,134 @@ void testPlanSwapWhileRendering()
     check(engine.getGraph().getNodes().size() == 3, "the graph is back to IN, a, OUT");
 }
 
+void testSpilloverKeepsTopology()
+{
+    std::printf("\nSpillover: a tail rings out through what it fed\n");
+
+    // IN -> verb -> amp -> OUT, where "amp" inverts. Retire verb with a tail and
+    // feed silence: verb's delay line still holds signal, which must come out
+    // *through* the inverting amp. That sign is the whole test — the lane
+    // renders retired blocks alone, so its tail would come out un-inverted.
+    BlockPool pool;
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    auto verb = makeNode("verb", 1, 0);
+    verb.block = pool.add("verb", 256, false);
+    graph.addNode(verb);
+
+    auto amp = makeNode("amp", 2, 0);
+    amp.block = pool.add("amp", 0, true); // inverts
+    graph.addNode(amp);
+
+    wire(graph, kInputNodeUid, "verb");
+    wire(graph, "verb", "amp");
+    wire(graph, "amp", kOutputNodeUid);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    // Prime verb's delay line with a known positive DC block.
+    for (int i = 0; i < kBlockSize; ++i)
+    {
+        buffer.setSample(0, i, 0.5f);
+        buffer.setSample(1, i, 0.5f);
+    }
+
+    engine.process(buffer, midi);
+
+    // Now retire verb with a one-second tail. The BlockInstance it owns is the
+    // one already in the graph, so hand ownership over rather than duplicating.
+    auto owned = std::move(pool.blocks[0]);
+    pool.blocks.erase(pool.blocks.begin());
+
+    check(engine.retireWithTail(std::move(owned), "verb", 1.0), "verb retired with a tail");
+    check(engine.getNumTailingBlocks() == 1, "one block is ringing out");
+
+    // Silence in from here. Anything that comes out is tail.
+    float mostNegative = 0.0f;
+    float mostPositive = 0.0f;
+
+    for (int block = 0; block < 4; ++block)
+    {
+        buffer.clear();
+        engine.process(buffer, midi);
+
+        for (int i = 0; i < kBlockSize; ++i)
+        {
+            mostNegative = juce::jmin(mostNegative, buffer.getSample(0, i));
+            mostPositive = juce::jmax(mostPositive, buffer.getSample(0, i));
+        }
+    }
+
+    std::printf("        tail range: %.4f .. %.4f\n", mostNegative, mostPositive);
+
+    check(mostNegative < -0.4f, "the tail rings out");
+    check(mostPositive < 0.01f,
+          "and it is inverted, so it passed through the amp downstream of it");
+
+    // Regression: cutting the tail's input must not orphan what is downstream
+    // of it. Reachability-from-IN alone would mark amp and OUT dormant here, and
+    // the rig would fall silent the moment a block started ringing out.
+    const auto plan = engine.getGraph().compile(kBlockSize);
+    const std::set<juce::String> dormant(plan.dormantUids.begin(), plan.dormantUids.end());
+
+    check(dormant.count("amp") == 0, "the block downstream of a tail stays live");
+    check(dormant.count(kOutputNodeUid) == 0, "OUT stays live while a tail rings");
+    check(dormant.count("verb") == 0, "the tailing node itself is live, not dormant");
+}
+
+void testSpilloverExpires()
+{
+    std::printf("\nSpillover: the window closes and the block is reclaimed\n");
+
+    BlockPool pool;
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    auto verb = makeNode("verb", 1, 0);
+    verb.block = pool.add("verb", 64, false);
+    graph.addNode(verb);
+
+    wire(graph, kInputNodeUid, "verb");
+    wire(graph, "verb", kOutputNodeUid);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    auto owned = std::move(pool.blocks[0]);
+    pool.blocks.erase(pool.blocks.begin());
+
+    // A short window: two blocks' worth.
+    const double seconds = (2.0 * kBlockSize) / kSampleRate;
+    engine.retireWithTail(std::move(owned), "verb", seconds);
+
+    check(engine.getGraph().findNode("verb") != nullptr, "the node stays while it rings");
+
+    for (int block = 0; block < 6; ++block)
+    {
+        buffer.clear();
+        engine.process(buffer, midi);
+        engine.collectGarbage();
+    }
+
+    check(engine.getNumTailingBlocks() == 0, "the tail expired");
+    check(engine.getGraph().findNode("verb") == nullptr, "and its node left the graph");
+
+    // The chain healed around it, so audio still reaches OUT.
+    for (int i = 0; i < kBlockSize; ++i)
+        buffer.setSample(0, i, 0.5f);
+
+    engine.process(buffer, midi);
+    check(buffer.getMagnitude(0, kBlockSize) > 0.4f, "IN reaches OUT after the tail is gone");
+}
+
 } // namespace
 
 int main()
@@ -736,6 +864,8 @@ int main()
     testRenderFanInSums();
     testNullOnAlignedBranches();
     testPlanSwapWhileRendering();
+    testSpilloverKeepsTopology();
+    testSpilloverExpires();
 
     std::printf("\n%s (%d failure%s)\n",
                 gFailures == 0 ? "ALL PASSED" : "FAILURES",
