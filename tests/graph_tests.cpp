@@ -1115,6 +1115,158 @@ void testRenderAfterLaneEdits()
     check(engine.getGraph().getNumBlocks() == 3, "three blocks remain");
 }
 
+void testWidthPropagation()
+{
+    std::printf("\nWidth negotiation propagates along wires\n");
+
+    // A mono rig: the first block must be told mono-in, and everything after it
+    // stereo, because a stereo-out plug-in widens the signal permanently. Getting
+    // this wrong is the bug CLAUDE.md records - a stereo/stereo plug-in fed two
+    // identical channels can never ping-pong, and sounds centred forever.
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    graph.addBlockNode(makeBlockFor("first"), 1, 0);
+    graph.addBlockNode(makeBlockFor("second"), 2, 0);
+
+    GraphWire a;
+    a.fromUid = kInputNodeUid;
+    a.toUid = "first";
+    graph.addWire(a);
+
+    GraphWire b;
+    b.fromUid = "first";
+    b.toUid = "second";
+    graph.addWire(b);
+
+    GraphWire c;
+    c.fromUid = "second";
+    c.toUid = kOutputNodeUid;
+    graph.addWire(c);
+
+    engine.setSourceIsMono(true);
+    engine.prepare(kSampleRate, kBlockSize);
+    engine.prepareGraph(true);
+
+    auto* first = graph.getBlockByUid("first");
+    auto* second = graph.getBlockByUid("second");
+
+    check(first != nullptr && first->getSourceIsMono(), "the first block is told mono-in");
+    check(first != nullptr && first->producesStereo(), "and it emits stereo");
+    check(second != nullptr && ! second->getSourceIsMono(),
+          "so the block after it is told stereo-in, not mono");
+
+    // suspendAudio must bracket any re-preparation of a live block.
+    int suspendCalls = 0;
+    bool suspendedWhilePreparing = false;
+
+    engine.suspendAudio = [&](bool suspend)
+    {
+        ++suspendCalls;
+        suspendedWhilePreparing = suspendedWhilePreparing || suspend;
+    };
+
+    engine.prepareGraph(true);
+    check(suspendCalls == 2, "re-preparing suspends and resumes exactly once");
+    check(suspendedWhilePreparing, "and suspends before touching a live plug-in");
+
+    // Nothing changed, so nothing should be touched - and the audio thread should
+    // not be suspended for a no-op.
+    suspendCalls = 0;
+    engine.prepareGraph(false);
+    check(suspendCalls == 0, "an unchanged graph does not suspend the audio thread");
+}
+
+void testWidthMergeRule()
+{
+    std::printf("\nA merge is stereo the moment any branch is\n");
+
+    // IN -> {mono path, stereo path} -> sink. The sink must be told stereo-in,
+    // because one branch widened even though the other did not.
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    graph.addBlockNode(makeBlockFor("widener"), 1, 0);
+    graph.addBlockNode(makeBlockFor("sink"), 2, 0);
+
+    GraphWire toWidener;
+    toWidener.fromUid = kInputNodeUid;
+    toWidener.toUid = "widener";
+    graph.addWire(toWidener);
+
+    GraphWire wideToSink;
+    wideToSink.fromUid = "widener";
+    wideToSink.toUid = "sink";
+    graph.addWire(wideToSink);
+
+    // The second branch skips the widener entirely, so it is still mono.
+    GraphWire direct;
+    direct.fromUid = kInputNodeUid;
+    direct.toUid = "sink";
+    graph.addWire(direct);
+
+    GraphWire out;
+    out.fromUid = "sink";
+    out.toUid = kOutputNodeUid;
+    graph.addWire(out);
+
+    engine.setSourceIsMono(true);
+    engine.prepare(kSampleRate, kBlockSize);
+    engine.prepareGraph(true);
+
+    auto* sink = graph.getBlockByUid("sink");
+    check(sink != nullptr && ! sink->getSourceIsMono(),
+          "a node fed by one mono and one stereo branch negotiates stereo-in");
+
+    // And with every branch mono, the node stays mono-fed.
+    GraphEngine allMono;
+    auto& monoGraph = allMono.getGraph();
+
+    monoGraph.addBlockNode(makeBlockFor("sink"), 1, 0);
+
+    GraphWire monoIn;
+    monoIn.fromUid = kInputNodeUid;
+    monoIn.toUid = "sink";
+    monoGraph.addWire(monoIn);
+
+    GraphWire monoOut;
+    monoOut.fromUid = "sink";
+    monoOut.toUid = kOutputNodeUid;
+    monoGraph.addWire(monoOut);
+
+    allMono.setSourceIsMono(true);
+    allMono.prepare(kSampleRate, kBlockSize);
+    allMono.prepareGraph(true);
+
+    check(monoGraph.getBlockByUid("sink")->getSourceIsMono(),
+          "with only mono reaching it, the node is still told mono-in");
+}
+
+void testLatencyRefresh()
+{
+    std::printf("\nLatency refresh republishes only when something moved\n");
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    graph.addBlockNode(makeBlockFor("a", 128), 1, 0);
+
+    GraphWire in;
+    in.fromUid = kInputNodeUid;
+    in.toUid = "a";
+    graph.addWire(in);
+
+    GraphWire out;
+    out.fromUid = "a";
+    out.toUid = kOutputNodeUid;
+    graph.addWire(out);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    check(engine.getLatencySamples() == 128, "the block's latency is published");
+    check(! engine.refreshLatency(), "a second refresh reports no change");
+}
+
 } // namespace
 
 int main()
@@ -1144,6 +1296,9 @@ int main()
     testLaneMoveReorders();
     testLaneInsertOnSecondRow();
     testRenderAfterLaneEdits();
+    testWidthPropagation();
+    testWidthMergeRule();
+    testLatencyRefresh();
 
     std::printf("\n%s (%d failure%s)\n",
                 gFailures == 0 ? "ALL PASSED" : "FAILURES",

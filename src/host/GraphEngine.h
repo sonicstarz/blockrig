@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -35,6 +36,34 @@ public:
 
     void prepare(double sampleRate, int maxBlockSize);
     void release();
+
+    /// Tells the graph its input is a single channel, so the blocks IN feeds
+    /// negotiate mono-in / stereo-out rather than being handed two identical
+    /// channels. Re-negotiates anything whose situation changed.
+    void setSourceIsMono(bool sourceIsMono);
+    bool getSourceIsMono() const noexcept { return mSourceIsMono; }
+
+    /// Walks the graph in topological order telling each block whether what
+    /// reaches it is still a single channel. The lane's rule generalized: a node
+    /// is mono-fed when *every* incoming branch is mono, so a merge is stereo the
+    /// moment any branch is.
+    ///
+    /// `force` re-prepares everything; otherwise only blocks whose answer changed
+    /// are touched, so adding one block does not re-initialise every plug-in in
+    /// the rig.
+    void prepareGraph(bool force);
+
+    /// Re-reads block latencies and republishes if any changed. Plug-ins report
+    /// latency late and change it when their settings do.
+    bool refreshLatency();
+
+    void setPlayHead(juce::AudioPlayHead* playHead);
+
+    /// Called with true before re-preparing any block that is in the published
+    /// plan, and false after. Re-negotiating a bus layout is not audio-safe: the
+    /// audio thread may be inside that plug-in's processBlock at that moment.
+    /// The owner wires this to AudioProcessor::suspendProcessing.
+    std::function<void(bool)> suspendAudio;
 
     /// The model. Edit it, then call publish().
     Graph& getGraph() noexcept { return mGraph; }
@@ -83,6 +112,15 @@ private:
     double mSampleRate = 48000.0;
     int mMaxBlockSize = 512;
     bool mPrepared = false;
+    bool mSourceIsMono = false;
+    juce::AudioPlayHead* mPlayHead = nullptr;
+
+    /// Walks the graph in topological order, calling `visit(block, monoIn)` for
+    /// every block whose negotiated width would change. Shared by the decide
+    /// pass and the apply pass so the two cannot disagree about who needs
+    /// touching. Message thread only, so the indirection costs nothing that
+    /// matters.
+    void walkWidths(bool force, const std::function<void(BlockInstance&, bool)>& visit) const;
 
     /// Handed to the audio thread; it takes ownership of whatever it finds here.
     std::atomic<RenderPlan*> mPendingPlan{nullptr};

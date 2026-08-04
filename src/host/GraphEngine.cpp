@@ -1,5 +1,7 @@
 #include "host/GraphEngine.h"
 
+#include <map>
+
 namespace blockrig
 {
 
@@ -24,6 +26,115 @@ void GraphEngine::prepare(double sampleRate, int maxBlockSize)
 void GraphEngine::release()
 {
     mPrepared = false;
+}
+
+void GraphEngine::setSourceIsMono(bool sourceIsMono)
+{
+    if (mSourceIsMono == sourceIsMono)
+        return;
+
+    mSourceIsMono = sourceIsMono;
+    prepareGraph(false);
+    publish();
+}
+
+void GraphEngine::setPlayHead(juce::AudioPlayHead* playHead)
+{
+    mPlayHead = playHead;
+
+    for (auto* block : mGraph.getBlocks())
+        if (auto* plugin = block->getPlugin())
+            plugin->setPlayHead(playHead);
+}
+
+void GraphEngine::walkWidths(bool force,
+                             const std::function<void(BlockInstance&, bool)>& visit) const
+{
+    const auto order = mGraph.topologicalOrder();
+
+    if (! order.has_value())
+        return;
+
+    // Whether each node's *output* is still a single channel.
+    std::map<juce::String, bool> outputIsMono;
+    outputIsMono[kInputNodeUid] = mSourceIsMono;
+
+    for (const auto& uid : *order)
+    {
+        const auto* node = mGraph.findNode(uid);
+
+        if (node == nullptr || node->isEndpoint())
+            continue;
+
+        // A node is mono-fed only when every branch reaching it is mono. One
+        // stereo branch makes the merge stereo — the generalization of the
+        // lane's per-stage rule to arbitrary fan-in.
+        bool monoIn = mSourceIsMono;
+        bool sawSource = false;
+
+        for (const auto& wire : mGraph.getWires())
+        {
+            if (wire.toUid != uid)
+                continue;
+
+            const auto it = outputIsMono.find(wire.fromUid);
+            const bool branchIsMono = it != outputIsMono.end() ? it->second : mSourceIsMono;
+
+            monoIn = sawSource ? (monoIn && branchIsMono) : branchIsMono;
+            sawSource = true;
+        }
+
+        if (node->block != nullptr)
+        {
+            auto& block = *node->block;
+
+            if (force || ! block.hasBeenPrepared() || block.layoutDrifted()
+                || block.getSourceIsMono() != monoIn)
+                visit(block, monoIn);
+
+            // Once something emits two channels the signal is no longer a single
+            // channel, whatever it does with them.
+            outputIsMono[uid] = monoIn && ! block.producesStereo();
+        }
+        else
+        {
+            outputIsMono[uid] = monoIn;
+        }
+    }
+}
+
+void GraphEngine::prepareGraph(bool force)
+{
+    if (! mPrepared)
+        return;
+
+    // Two passes, as the lane does it: the first only decides whether anything
+    // needs re-preparing, so the audio thread is suspended exactly when a live
+    // plug-in is about to be touched and not on every edit.
+    bool anyToPrepare = false;
+    walkWidths(force, [&anyToPrepare](BlockInstance&, bool) { anyToPrepare = true; });
+
+    if (! anyToPrepare)
+        return;
+
+    if (suspendAudio)
+        suspendAudio(true);
+
+    walkWidths(force,
+               [this](BlockInstance& block, bool monoIn)
+               { block.prepare(mSampleRate, mMaxBlockSize, monoIn); });
+
+    if (suspendAudio)
+        suspendAudio(false);
+}
+
+bool GraphEngine::refreshLatency()
+{
+    if (! mGraph.refreshLatencies())
+        return false;
+
+    publish();
+    return true;
 }
 
 void GraphEngine::publish()

@@ -310,10 +310,22 @@ bool Graph::removeWire(const GraphWire& wire)
     return mWires.size() != before;
 }
 
-void Graph::refreshLatencies()
+bool Graph::refreshLatencies()
 {
+    bool changed = false;
+
     for (auto& node : mNodes)
-        node.latencySamples = node.block != nullptr ? node.block->getLatencySamples() : 0;
+    {
+        const int latency = node.block != nullptr ? node.block->getLatencySamples() : 0;
+
+        if (latency != node.latencySamples)
+        {
+            node.latencySamples = latency;
+            changed = true;
+        }
+    }
+
+    return changed;
 }
 
 std::optional<std::vector<juce::String>> Graph::topologicalOrder() const

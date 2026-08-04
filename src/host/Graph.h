@@ -220,8 +220,9 @@ public:
 
     /// Pulls each node's current latency from its block. Mirrors the lane's
     /// refreshLatency() poll; plug-ins report latency late and change it when
-    /// their settings change.
-    void refreshLatencies();
+    /// their settings change. Returns true if any node's latency moved, so the
+    /// caller knows whether a republish is needed.
+    bool refreshLatencies();
 
     /// Execution order, or nullopt if the graph contains a cycle. Only nodes
     /// that participate in the signal path appear; dormant nodes are excluded.
