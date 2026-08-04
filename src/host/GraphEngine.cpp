@@ -2,6 +2,8 @@
 
 #include <map>
 
+#include "host/GraphLane.h"
+
 namespace blockrig
 {
 
@@ -26,6 +28,62 @@ void GraphEngine::prepare(double sampleRate, int maxBlockSize)
 void GraphEngine::release()
 {
     mPrepared = false;
+}
+
+void GraphEngine::clear()
+{
+    mGraph.clear();
+    mTails.clear();
+    mExpiredTails.clear();
+    publish();
+}
+
+int GraphEngine::getNumStages() const { return graphlane::getNumStages(mGraph); }
+
+int GraphEngine::getNumRows(int stage) const { return graphlane::getNumRows(mGraph, stage); }
+
+bool GraphEngine::isStageSplit(int stage) const { return graphlane::isStageSplit(mGraph, stage); }
+
+std::vector<BlockInstance*> GraphEngine::getBlocksInRow(int stage, int row) const
+{
+    return graphlane::getBlocksInRow(mGraph, stage, row);
+}
+
+BlockInstance* GraphEngine::getBlockByIndex(int index) const
+{
+    return graphlane::getBlockByIndex(mGraph, index);
+}
+
+std::optional<BlockPosition> GraphEngine::findBlock(const juce::String& uid) const
+{
+    return graphlane::findBlock(mGraph, uid);
+}
+
+void GraphEngine::insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition position)
+{
+    graphlane::insertBlock(mGraph, std::move(block), position);
+    prepareGraph(false);
+    publish();
+}
+
+void GraphEngine::removeBlock(const juce::String& uid)
+{
+    if (graphlane::removeBlock(mGraph, uid))
+    {
+        prepareGraph(false);
+        publish();
+    }
+}
+
+void GraphEngine::moveBlock(const juce::String& uid, BlockPosition position)
+{
+    if (graphlane::moveBlock(mGraph, uid, position))
+    {
+        // A move can change what feeds a block, so widths may need renegotiating
+        // even though no block was added or removed.
+        prepareGraph(false);
+        publish();
+    }
 }
 
 void GraphEngine::setSourceIsMono(bool sourceIsMono)
@@ -168,16 +226,11 @@ bool GraphEngine::retireWithTail(const juce::String& uid, double seconds)
         return true;
     }
 
-    // The block has to outlive its node, so take it off the graph's books
-    // before the node's window starts closing.
+    // The block has to outlive its node, so take it off the graph's books before
+    // the node's window starts closing. A null here means the block was never
+    // graph-owned — a caller keeping its own storage — which still tails
+    // correctly: the node keeps rendering and the caller keeps the lifetime.
     auto block = mGraph.releaseBlock(uid);
-
-    if (block == nullptr)
-    {
-        // Not graph-owned — a caller keeping its own storage. Tail anyway; the
-        // node keeps rendering and the caller keeps the lifetime.
-        block = nullptr;
-    }
 
     // Cut the inputs but keep the outputs: from here the node renders silence
     // through whatever it used to feed.
@@ -348,6 +401,8 @@ void GraphEngine::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
     const int numSamples = buffer.getNumSamples();
     const double bufferDuration = mSampleRate > 0.0 ? numSamples / mSampleRate : 0.0;
 
+    const auto start = juce::Time::getHighResolutionTicks();
+
     auto& plan = *mActivePlan;
 
     for (auto& step : plan.steps)
@@ -404,6 +459,21 @@ void GraphEngine::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
             for (int channel = 0; channel < channels; ++channel)
                 buffer.copyFrom(channel, 0, destination, channel, 0, numSamples);
         }
+    }
+
+    // Whole-graph cost as a fraction of the buffer's budget, tails included —
+    // spillover doubles the work while it rings, and the meter has to say so
+    // rather than flatter the rig.
+    const auto elapsed =
+        juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - start);
+
+    if (bufferDuration > 0.0)
+    {
+        const auto fraction = static_cast<float>(elapsed / bufferDuration);
+        mTotalLoad.addMeasurement(fraction);
+
+        if (fraction >= 1.0f)
+            mDropouts.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "host/Graph.h"
+#include "host/GraphLane.h"
 
 namespace blockrig
 {
@@ -106,6 +107,37 @@ public:
         return mPublishedLatency.load(std::memory_order_acquire);
     }
 
+    const BlockLoad& getTotalLoad() const noexcept { return mTotalLoad; }
+    BlockLoad& getTotalLoad() noexcept { return mTotalLoad; }
+
+    int getDropoutCount() const noexcept { return mDropouts.load(std::memory_order_relaxed); }
+    void clearDropoutCount() noexcept { mDropouts.store(0, std::memory_order_relaxed); }
+
+    //==============================================================================
+    // Lane-shaped surface, so BlockRigProcessor and the existing UI can drive a
+    // graph unchanged. Transitional — G5 deletes this block along with
+    // host/GraphLane. Every one of these forwards to graphlane or the graph.
+
+    void clear();
+
+    BlockInstance* getBlockByUid(const juce::String& uid) const { return mGraph.getBlockByUid(uid); }
+    std::vector<BlockInstance*> getBlocks() const { return mGraph.getBlocks(); }
+    int getNumBlocks() const { return mGraph.getNumBlocks(); }
+
+    int getNumStages() const;
+    int getNumRows(int stage) const;
+    bool isStageSplit(int stage) const;
+    std::vector<BlockInstance*> getBlocksInRow(int stage, int row) const;
+    BlockInstance* getBlockByIndex(int index) const;
+    std::optional<BlockPosition> findBlock(const juce::String& uid) const;
+
+    void insertBlock(std::unique_ptr<BlockInstance> block, BlockPosition position);
+    void removeBlock(const juce::String& uid);
+    void moveBlock(const juce::String& uid, BlockPosition position);
+
+    /// The lane's name for prepareGraph, kept so call sites do not have to move.
+    void prepareLane(bool force) { prepareGraph(force); }
+
 private:
     Graph mGraph;
 
@@ -138,6 +170,9 @@ private:
     int mRetirementsSeen = 0;
 
     std::atomic<int> mPublishedLatency{0};
+
+    BlockLoad mTotalLoad;
+    std::atomic<int> mDropouts{0};
 
     /// A block ringing out. Held by unique_ptr so `samplesLeft` keeps a stable
     /// address: published plans point straight at it.

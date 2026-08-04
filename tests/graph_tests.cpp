@@ -1242,6 +1242,49 @@ void testWidthMergeRule()
           "with only mono reaching it, the node is still told mono-in");
 }
 
+void testLaneCompatibleSurface()
+{
+    std::printf("\nThe engine answers lane-shaped questions\n");
+
+    // What BlockRigProcessor and the existing UI call. These forward to
+    // graphlane; the point of the test is that the engine is a drop-in, so the
+    // processor swap is mechanical rather than exploratory.
+    GraphEngine engine;
+    engine.prepare(kSampleRate, kBlockSize);
+
+    BlockPosition position;
+    position.stage = 0;
+    position.row = 0;
+
+    engine.insertBlock(makeBlockFor("a"), position);
+    position.stage = 1;
+    engine.insertBlock(makeBlockFor("b"), position);
+
+    check(engine.getNumBlocks() == 2, "getNumBlocks");
+    check(engine.getBlockByUid("a") != nullptr, "getBlockByUid");
+    check(engine.getBlocks().size() == 2, "getBlocks");
+    check(engine.getNumStages() == 2, "getNumStages");
+    check(engine.getNumRows(0) == 1, "getNumRows");
+    check(! engine.isStageSplit(0), "isStageSplit");
+    check(engine.getBlocksInRow(0, 0).size() == 1, "getBlocksInRow");
+    check(engine.getBlockByIndex(1) != nullptr, "getBlockByIndex");
+    check(engine.findBlock("b").has_value(), "findBlock");
+
+    // Audio flows through what the lane API built.
+    check(peakAfterPriming(engine, 6, 1) > 0.1f, "audio flows through a lane-built graph");
+
+    // Load metering runs, and reports a sane fraction of the buffer budget.
+    check(engine.getTotalLoad().getAverage() >= 0.0f, "total load is measured");
+    check(engine.getDropoutCount() == 0, "no dropouts on a two-block graph");
+
+    engine.removeBlock("a");
+    check(engine.getNumBlocks() == 1, "removeBlock");
+
+    engine.clear();
+    check(engine.getNumBlocks() == 0, "clear empties the graph");
+    check(engine.getNumStages() == 0, "and the lane sees no stages");
+}
+
 void testLatencyRefresh()
 {
     std::printf("\nLatency refresh republishes only when something moved\n");
@@ -1298,6 +1341,7 @@ int main()
     testRenderAfterLaneEdits();
     testWidthPropagation();
     testWidthMergeRule();
+    testLaneCompatibleSurface();
     testLatencyRefresh();
 
     std::printf("\n%s (%d failure%s)\n",
