@@ -48,7 +48,7 @@ a transitional projection.
 | [docs/16-BUILD-PLAN.md](docs/16-BUILD-PLAN.md) | Phases P0–P12 with acceptance criteria and risks |
 | [docs/17-COMPETITIVE.md](docs/17-COMPETITIVE.md) | QC CorOS 4 / Helix Stadium / GP5 / TONEX vs BlockRig |
 | [docs/18-UI-OVERHAUL.md](docs/18-UI-OVERHAUL.md) | Visual overhaul spec (shipped) |
-| [docs/19-GRAPH-ENGINE.md](docs/19-GRAPH-ENGINE.md) | Patch-canvas graph engine (planned, not started) |
+| [docs/19-GRAPH-ENGINE.md](docs/19-GRAPH-ENGINE.md) | Patch-canvas graph engine (G1–G2 built and live; G3–G5 outstanding) |
 | [docs/archive-nam-plugin/](docs/archive-nam-plugin/) | First incarnation's docs (verified NAM facts, deferred capture design) |
 
 ## Build
@@ -61,8 +61,9 @@ ctest --test-dir build --output-on-failure
 ```
 
 Builds `BlockRigApp` (standalone) and `BlockRigPlugin` (VST3/AU; `auval` passes). Tests:
-`dsp_tests`, `chain_tests`, `rig_tests` green; `scan_tests` is a soak test, disabled by default.
-`bench` covers the NAM engine (A2 ≈ 3.4% of one core per instance at 48 kHz/128).
+`dsp_tests`, `graph_tests`, `migration_tests`, `chain_tests` and `rig_tests` all green;
+`scan_tests` is a soak test, disabled by default. `bench` covers the NAM engine (A2 ≈ 3.4% of one
+core per instance at 48 kHz/128).
 
 Diagnostics live behind CLI flags on the standalone app: `--scan`, `--audio-check`,
 `--plugin-check <name>`, `--chain-check <a,b,...>` / `--chain-check session`.

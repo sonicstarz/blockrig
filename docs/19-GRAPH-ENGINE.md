@@ -4,11 +4,12 @@
 G3-G5 (canvas, gestures, cutover polish) remain. The lane UI drives the graph
 through a transitional projection (`host/GraphLane`, `GraphEngine`'s lane-shaped
 surface) which G5 deletes. Rigs save as schemaVersion 2; v1 files migrate on
-load. Originally planned 2026-08-02 as: Supersedes the stage/row chain model
-(docs/12 §chain engine) and the lane UI (docs/13) once complete. Written before
-any code, per the pivot request: free-form routing — drag blocks on a snapping
-grid, wire them visually, split and merge signal paths by gesture instead of the
-per-stage A/B menu.
+load.
+
+Planned 2026-08-02, before any code. Supersedes the stage/row chain model
+(docs/12 §chain engine) and the lane UI (docs/13): free-form routing — drag
+blocks on a snapping grid, wire them visually, split and merge signal paths by
+gesture instead of the per-stage A/B menu.
 
 ## 0. The idea in one paragraph
 
