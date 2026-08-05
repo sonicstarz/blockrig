@@ -1,5 +1,8 @@
 #include "state/RigState.h"
 
+#include "state/GraphState.h"
+#include "state/RigMigration.h"
+
 #include <tuple>
 
 #include "BlockRigProcessor.h"
@@ -71,27 +74,28 @@ juce::ValueTree describeBlock(BlockInstance& block)
     return tree;
 }
 
-/// Walks the saved lane and rebuilds it one block at a time, because plug-in
-/// creation is asynchronous and lane order has to be deterministic.
+/// Rebuilds the graph one block at a time, because plug-in creation is
+/// asynchronous and the order blocks appear in has to be deterministic.
+///
+/// The structure — nodes, positions, wires — is already in place before this
+/// runs: graphstate::applyStructure rebuilds it synchronously from the
+/// document, so every node exists with its saved uid and the wires already
+/// connect them. All that is left is to fill each node with its plug-in.
 class SequentialRestore final : public std::enable_shared_from_this<SequentialRestore>
 {
 public:
     struct SavedBlock
     {
+        juce::String uid;
         juce::PluginDescription description;
         juce::MemoryBlock state;
         bool bypassed = false;
-        BlockPosition position;
     };
 
     SequentialRestore(BlockRigProcessor& processor, std::vector<SavedBlock> blocks,
-                      std::vector<std::tuple<int, int, float, float>> rowSettings,
-                      std::vector<std::pair<int, juce::String>> stageModes,
                       std::function<void(RestoreResult)> onFinished)
         : mProcessor(processor)
         , mBlocks(std::move(blocks))
-        , mRowSettings(std::move(rowSettings))
-        , mStageModes(std::move(stageModes))
         , mOnFinished(std::move(onFinished))
     {
         mResult.blocksRequested = static_cast<int>(mBlocks.size());
@@ -104,20 +108,10 @@ private:
     {
         if (mIndex >= static_cast<int>(mBlocks.size()))
         {
-            // Row gain and pan last: the rows have to exist first.
-            auto& chain = mProcessor.getChain();
-
-            for (const auto& [stageIndex, rowIndex, gainDb, pan] : mRowSettings)
-            {
-                if (rowIndex > 0 && !chain.isStageSplit(stageIndex))
-                    continue;
-                chain.setRowGainDb(stageIndex, rowIndex, gainDb);
-                chain.setRowPan(stageIndex, rowIndex, pan);
-            }
-
-            for (const auto& [stageIndex, mode] : mStageModes)
-                chain.setStageMode(stageIndex, mode == "parallel" ? BlockChain::StageMode::parallel
-                                                                  : BlockChain::StageMode::dualMono);
+            // Widths are negotiated once, at the end: doing it per block would
+            // re-prepare the whole rig N times on load.
+            mProcessor.getChain().prepareGraph(true);
+            mProcessor.getChain().publish();
 
             if (mOnFinished)
                 mOnFinished(mResult);
@@ -127,48 +121,43 @@ private:
         const auto& saved = mBlocks[static_cast<size_t>(mIndex)];
         auto self = shared_from_this();
 
-        // Make sure the stage exists (and is split) before the block lands in it.
-        auto& chain = mProcessor.getChain();
-        while (chain.getNumStages() <= saved.position.stage)
-            chain.appendEmptyStage();
-
-        if (saved.position.row > 0 && !chain.isStageSplit(saved.position.stage))
-            chain.splitStage(saved.position.stage);
-
-        mProcessor.addBlock(saved.description, saved.position, [self](juce::String uid, juce::String error) {
-            self->blockFinished(std::move(uid), std::move(error));
-        });
+        mProcessor.createBlockForNode(saved.description, saved.uid,
+                                      [self](juce::String error)
+                                      { self->blockFinished(std::move(error)); });
     }
 
-    void blockFinished(juce::String uid, juce::String error)
+    void blockFinished(juce::String error)
     {
         const auto& saved = mBlocks[static_cast<size_t>(mIndex)];
+        auto& graph = mProcessor.getChain().getGraph();
 
-        if (uid.isEmpty())
+        if (graph.getBlockByUid(saved.uid) == nullptr)
         {
             // A missing plug-in must not sink the rig, and must not quietly
-            // vanish either: a placeholder holds the slot, remembers what
+            // vanish either: a placeholder holds the node, remembers what
             // belongs there and the state it was saved with, and passes audio
-            // through until the plug-in comes back.
+            // through until the plug-in comes back. It keeps the saved uid, so
+            // the wires around it still land.
             mResult.missingPlugins.add(saved.description.name
                                        + (error.isNotEmpty() ? " (" + error + ")" : juce::String()));
 
-            auto placeholder = std::make_unique<BlockInstance>(nullptr, juce::Uuid().toString());
+            auto placeholder = std::make_unique<BlockInstance>(nullptr, saved.uid);
             placeholder->setMissingDescription(saved.description, saved.state);
             placeholder->setBypassed(saved.bypassed);
-            mProcessor.getChain().insertBlock(std::move(placeholder), saved.position);
+            graph.setBlockFor(saved.uid, std::move(placeholder));
         }
         else
         {
             ++mResult.blocksCreated;
 
-            if (auto* block = mProcessor.getChain().getBlockByUid(uid))
+            if (auto* block = graph.getBlockByUid(saved.uid))
             {
                 block->setBypassed(saved.bypassed);
 
                 if (auto* plugin = block->getPlugin(); plugin != nullptr && !saved.state.isEmpty())
                 {
-                    plugin->setStateInformation(saved.state.getData(), static_cast<int>(saved.state.getSize()));
+                    plugin->setStateInformation(saved.state.getData(),
+                                                static_cast<int>(saved.state.getSize()));
 
                     // A refused chunk produces no error, so check rather than
                     // trust: if the plug-in hands back something completely
@@ -178,11 +167,6 @@ private:
 
                     if (readBack.isEmpty() && !saved.state.isEmpty())
                         mResult.stateNotRestored.add(saved.description.name);
-
-                    // The chunk may have rearranged the plug-in's buses; if its
-                    // channel counts drifted from what was negotiated, this
-                    // re-prepares it before anything downstream trusts them.
-                    mProcessor.getChain().prepareLane(false);
                 }
             }
         }
@@ -193,12 +177,11 @@ private:
 
     BlockRigProcessor& mProcessor;
     std::vector<SavedBlock> mBlocks;
-    std::vector<std::tuple<int, int, float, float>> mRowSettings;
-    std::vector<std::pair<int, juce::String>> mStageModes;
     std::function<void(RestoreResult)> mOnFinished;
     RestoreResult mResult;
     int mIndex = 0;
 };
+
 } // namespace
 
 juce::ValueTree toValueTree(BlockRigProcessor& processor)
@@ -239,34 +222,11 @@ juce::ValueTree toValueTree(BlockRigProcessor& processor)
                           nullptr);
     rig.appendChild(transport, nullptr);
 
-    // Stage per chain stage, Row per parallel path. A split writes two rows.
-    juce::ValueTree lane(ids::lane);
-    auto& chain = processor.getChain();
-
-    for (int stageIndex = 0; stageIndex < chain.getNumStages(); ++stageIndex)
-    {
-        juce::ValueTree stage(ids::stage);
-        stage.setProperty("mode", chain.getStageMode(stageIndex) == BlockChain::StageMode::dualMono
-                                      ? "dualMono"
-                                      : "parallel",
-                          nullptr);
-
-        for (int rowIndex = 0; rowIndex < chain.getNumRows(stageIndex); ++rowIndex)
-        {
-            juce::ValueTree row(ids::row);
-            row.setProperty(ids::gainDb, chain.getRowGainDb(stageIndex, rowIndex), nullptr);
-            row.setProperty("pan", chain.getRowPan(stageIndex, rowIndex), nullptr);
-
-            for (auto* block : chain.getBlocksInRow(stageIndex, rowIndex))
-                row.appendChild(describeBlock(*block), nullptr);
-
-            stage.appendChild(row, nullptr);
-        }
-
-        lane.appendChild(stage, nullptr);
-    }
-
-    rig.appendChild(lane, nullptr);
+    // The graph: nodes with grid positions, wires between them. One serialiser
+    // for the standalone rig file and the DAW chunk, as before.
+    rig.appendChild(graphstate::toValueTree(processor.getChain().getGraph(),
+                                            [](BlockInstance& block) { return describeBlock(block); }),
+                    nullptr);
     return rig;
 }
 
@@ -278,15 +238,6 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
     if (!rig.isValid() || !rig.hasType(ids::root))
     {
         result.error = "Not a BlockRig rig.";
-        if (onFinished)
-            onFinished(result);
-        return;
-    }
-
-    const int version = static_cast<int>(rig.getProperty(ids::schemaVersion, 0));
-    if (version > kSchemaVersion)
-    {
-        result.error = "This rig was made in a newer version of BlockRig.";
         if (onFinished)
             onFinished(result);
         return;
@@ -320,59 +271,64 @@ void restore(BlockRigProcessor& processor, const juce::ValueTree& rig,
             static_cast<int>(transport.getProperty("timeSigDenominator", 4)));
     }
 
-    // Collect the saved lane before touching the live one.
-    std::vector<SequentialRestore::SavedBlock> saved;
-    std::vector<std::tuple<int, int, float, float>> rowSettings; // stage, row, gain, pan
-    std::vector<std::pair<int, juce::String>> stageModes;
-    const auto lane = rig.getChildWithName(ids::lane);
+    // Bring the document up to the current schema first, so everything below
+    // only ever sees a graph. A v1 rig migrates here; a v2 one passes through.
+    const auto current = migrateToCurrent(rig);
 
-    for (int stageIndex = 0; stageIndex < lane.getNumChildren(); ++stageIndex)
+    if (!current.isValid())
     {
-        const auto stage = lane.getChild(stageIndex);
-        stageModes.emplace_back(stageIndex, stage.getProperty("mode", "dualMono").toString());
-
-        for (int rowIndex = 0; rowIndex < stage.getNumChildren(); ++rowIndex)
-        {
-            const auto row = stage.getChild(rowIndex);
-
-            rowSettings.emplace_back(stageIndex, rowIndex,
-                                     static_cast<float>(row.getProperty(ids::gainDb, 0.0)),
-                                     static_cast<float>(row.getProperty("pan", 0.0)));
-
-            int indexInRow = 0;
-
-            for (int blockIndex = 0; blockIndex < row.getNumChildren(); ++blockIndex)
-            {
-                const auto blockTree = row.getChild(blockIndex);
-                if (!blockTree.hasType(ids::block))
-                    continue;
-
-                SequentialRestore::SavedBlock entry;
-                entry.position = BlockPosition{stageIndex, rowIndex, indexInRow++};
-                entry.description.pluginFormatName = blockTree.getProperty(ids::format).toString();
-                entry.description.fileOrIdentifier = blockTree.getProperty(ids::identifier).toString();
-                entry.description.name = blockTree.getProperty(ids::name).toString();
-                entry.description.manufacturerName = blockTree.getProperty(ids::manufacturer).toString();
-                entry.description.version = blockTree.getProperty(ids::version).toString();
-                entry.description.uniqueId = entry.description.deprecatedUid =
-                    blockTree.getProperty(ids::uniqueId).toString().getIntValue();
-                entry.bypassed = static_cast<bool>(blockTree.getProperty(ids::bypassed, false));
-
-                const auto stateTree = blockTree.getChildWithName(ids::state);
-                if (stateTree.isValid())
-                    entry.state = fromBase64(stateTree.getProperty("data").toString());
-
-                saved.push_back(std::move(entry));
-            }
-        }
+        result.error = "This rig was made in a newer version of BlockRig.";
+        if (onFinished)
+            onFinished(result);
+        return;
     }
 
-    // Every plug-in in the old chain is about to be destroyed.
+    // Every plug-in in the old graph is about to be destroyed.
     processor.notifyBlockRemoval({});
-    processor.getChain().clear();
 
-    auto sequence = std::make_shared<SequentialRestore>(processor, std::move(saved), std::move(rowSettings),
-                                                       std::move(stageModes), std::move(onFinished));
+    // Structure first, synchronously: nodes at their saved positions with their
+    // saved uids, and every wire between them. Plug-ins arrive afterwards.
+    auto& graph = processor.getChain().getGraph();
+    const auto load = graphstate::applyStructure(graph, current.getChildWithName(ids::graph));
+
+    if (load.error.isNotEmpty())
+    {
+        result.error = load.error;
+        if (onFinished)
+            onFinished(result);
+        return;
+    }
+
+    if (load.rejectedWires > 0)
+        result.stateNotRestored.add(juce::String(load.rejectedWires)
+                                    + " connection(s) in this rig were invalid and were dropped");
+
+    std::vector<SequentialRestore::SavedBlock> saved;
+
+    for (const auto& pending : load.pending)
+    {
+        const auto& node = pending.source;
+
+        SequentialRestore::SavedBlock entry;
+        entry.uid = pending.uid;
+        entry.description.pluginFormatName = node.getProperty(ids::format).toString();
+        entry.description.fileOrIdentifier = node.getProperty(ids::identifier).toString();
+        entry.description.name = node.getProperty(ids::name).toString();
+        entry.description.manufacturerName = node.getProperty(ids::manufacturer).toString();
+        entry.description.version = node.getProperty(ids::version).toString();
+        entry.description.uniqueId = entry.description.deprecatedUid =
+            node.getProperty(ids::uniqueId).toString().getIntValue();
+        entry.bypassed = static_cast<bool>(node.getProperty(ids::bypassed, false));
+
+        const auto stateTree = node.getChildWithName(ids::state);
+        if (stateTree.isValid())
+            entry.state = fromBase64(stateTree.getProperty("data").toString());
+
+        saved.push_back(std::move(entry));
+    }
+
+    auto sequence =
+        std::make_shared<SequentialRestore>(processor, std::move(saved), std::move(onFinished));
     sequence->start();
 }
 

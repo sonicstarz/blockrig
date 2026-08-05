@@ -426,6 +426,33 @@ void BlockRigProcessor::notifyBlockRemoval(const juce::String& uid)
         onBlockAboutToBeRemoved(uid);
 }
 
+void BlockRigProcessor::createBlockForNode(const juce::PluginDescription& description,
+                                           const juce::String& uid,
+                                           std::function<void(juce::String error)> onFinished)
+{
+    const auto sampleRate = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+    const auto blockSize = getBlockSize() > 0 ? getBlockSize() : 512;
+
+    mCatalog.getFormatManager().createPluginInstanceAsync(
+        description, sampleRate, blockSize,
+        [this, uid, sampleRate, blockSize, onFinished](
+            std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& error) {
+            if (instance == nullptr)
+            {
+                if (onFinished)
+                    onFinished(error.isNotEmpty() ? error : juce::String("Could not create plug-in"));
+                return;
+            }
+
+            auto block = std::make_unique<BlockInstance>(std::move(instance), uid);
+            block->prepare(sampleRate, blockSize, mChain.getSourceIsMono());
+            mChain.getGraph().setBlockFor(uid, std::move(block));
+
+            if (onFinished)
+                onFinished({});
+        });
+}
+
 void BlockRigProcessor::removeBlock(const juce::String& uid)
 {
     // Before the plug-in dies, not after: its editor outlives it otherwise and
@@ -447,20 +474,17 @@ void BlockRigProcessor::moveBlock(const juce::String& uid, BlockPosition positio
         onChainChanged();
 }
 
-void BlockRigProcessor::splitStage(int stageIndex)
+void BlockRigProcessor::splitStage(int)
 {
-    if (mChain.splitStage(stageIndex) && onChainChanged)
-        onChainChanged();
+    // No graph equivalent, and none is needed. A lane split created an empty
+    // row B waiting to be filled; on a graph you drop a block below a node and
+    // it wires itself into a parallel branch. docs/19 §4 retires both menu
+    // items at G5 - until the canvas lands they simply do nothing.
 }
 
-void BlockRigProcessor::mergeStage(int stageIndex)
+void BlockRigProcessor::mergeStage(int)
 {
-    if (mChain.mergeStage(stageIndex))
-    {
-        updateLatency();
-        if (onChainChanged)
-            onChainChanged();
-    }
+    // Likewise: removing the block on the lower row is the merge.
 }
 
 void BlockRigProcessor::getStateInformation(juce::MemoryBlock& destData)

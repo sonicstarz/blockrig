@@ -6,6 +6,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "host/BlockChain.h"
+#include "host/GraphEngine.h"
 #include "host/PluginCatalog.h"
 #include "host/Transport.h"
 #include "dsp/PitchDetector.h"
@@ -55,7 +56,10 @@ public:
     //==============================================================================
     // Rig editing, driven by the lane UI. All message-thread only.
 
-    BlockChain& getChain() { return mChain; }
+    /// The engine. Still called getChain() so the UI above does not have to
+    /// move: GraphEngine answers every lane-shaped question the lane UI asks
+    /// (docs/19 G2 transitional layer, deleted at G5).
+    GraphEngine& getChain() { return mChain; }
     PluginCatalog& getCatalog() { return mCatalog; }
     Transport& getTransport() { return mTransport; }
 
@@ -66,6 +70,16 @@ public:
                   std::function<void(juce::String uid, juce::String error)> onFinished = {});
 
     void removeBlock(const juce::String& uid);
+
+    /// Restore-time creation: instantiates a plug-in and attaches it to a node
+    /// that already exists in the graph, keeping the uid the document saved.
+    ///
+    /// This is why restore does not go through addBlock, which mints a fresh
+    /// uid. Wires reference uids, and so do scenes and MIDI mappings — minting
+    /// new ones on load silently detaches all three from their blocks.
+    void createBlockForNode(const juce::PluginDescription& description,
+                            const juce::String& uid,
+                            std::function<void(juce::String error)> onFinished);
 
     /// Adds a block and pushes a saved state chunk into it once it exists.
     /// Paste and favourites both need this; addBlock alone would drop the
@@ -214,7 +228,7 @@ public:
 private:
     void updateLatency();
 
-    BlockChain mChain;
+    GraphEngine mChain;
     PluginCatalog mCatalog;
     Transport mTransport;
 

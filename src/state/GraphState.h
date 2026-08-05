@@ -46,7 +46,7 @@ struct LoadResult
 /// `<Node>` payload — identity, bypass, the opaque state chunk — exactly as the
 /// lane's serialiser does today; endpoints have no block and are written bare.
 juce::ValueTree toValueTree(const Graph& graph,
-                            const std::function<juce::ValueTree(const BlockInstance&)>& describeBlock);
+                            const std::function<juce::ValueTree(BlockInstance&)>& describeBlock);
 
 /// Rebuilds `graph` from a `<Graph>` element: clears it, recreates every node at
 /// its saved position, and reconnects every wire. Blocks are left null and

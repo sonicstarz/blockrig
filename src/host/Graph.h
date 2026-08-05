@@ -180,6 +180,12 @@ public:
     /// The block must already be prepared.
     void addBlockNode(std::unique_ptr<BlockInstance> block, int col, int row);
 
+    /// Attaches a block to a node that already exists — the restore path, where
+    /// the structure is rebuilt from the document first and plug-ins arrive
+    /// asynchronously afterwards. The node keeps its saved uid, which is what
+    /// keeps wires, scenes and MIDI mappings pointing at the right block.
+    bool setBlockFor(const juce::String& uid, std::unique_ptr<BlockInstance> block);
+
     /// Hands a block back out, leaving the node in place but blockless. Used by
     /// spillover, which needs the block to outlive its node.
     std::unique_ptr<BlockInstance> releaseBlock(const juce::String& uid);

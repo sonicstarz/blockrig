@@ -94,6 +94,8 @@ set(BLOCKRIG_SOURCES
     src/BlockRigProcessor.cpp
     src/midi/MidiEngine.cpp
     src/state/RigState.cpp
+    src/state/RigMigration.cpp
+    src/state/GraphState.cpp
     src/state/BlockFavorites.cpp
     src/state/Setlist.cpp
     src/state/Snapshots.cpp
@@ -101,6 +103,9 @@ set(BLOCKRIG_SOURCES
     src/state/RigFiles.cpp
     src/state/PluginState.cpp
     src/host/BlockChain.cpp
+    src/host/Graph.cpp
+    src/host/GraphEngine.cpp
+    src/host/GraphLane.cpp
     src/host/BlockInstance.cpp
     src/host/Transport.cpp
     src/host/PluginCatalog.cpp
@@ -389,12 +394,17 @@ if(BLOCKRIG_BUILD_TESTS)
         src/BlockRigProcessor.cpp
         src/midi/MidiEngine.cpp
         src/state/RigState.cpp
+    src/state/RigMigration.cpp
+    src/state/GraphState.cpp
     src/state/BlockFavorites.cpp
     src/state/Setlist.cpp
     src/state/Snapshots.cpp
     src/state/UndoHistory.cpp
     src/state/RigFiles.cpp
         src/host/BlockChain.cpp
+        src/host/Graph.cpp
+        src/host/GraphEngine.cpp
+        src/host/GraphLane.cpp
         src/host/BlockInstance.cpp
     src/host/Transport.cpp
         src/host/PluginCatalog.cpp

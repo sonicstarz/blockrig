@@ -138,6 +138,28 @@ public:
     /// The lane's name for prepareGraph, kept so call sites do not have to move.
     void prepareLane(bool force) { prepareGraph(force); }
 
+    /// Row gain/pan and stage mode have no graph equivalent and are NOT stored.
+    ///
+    /// In the lane these were properties of a parallel row. On a graph the same
+    /// thing is a Utility block sitting on that branch — which is exactly what
+    /// migrate_1_to_2 mints when it converts a dualMono split, so migrated rigs
+    /// keep their sound. What is gone is the *lane's editor* for those values.
+    ///
+    /// These exist so the transitional UI compiles. They deliberately do not
+    /// pretend to store anything: a setter that remembered a value the audio
+    /// path ignores would be worse than one that plainly does nothing. The
+    /// Split A/B panel that drives them is disabled for the same reason — see
+    /// MainView::firstSplitStage.
+    void setRowGainDb(int, int, float) {}
+    void setRowPan(int, int, float) {}
+    float getRowGainDb(int, int) const { return 0.0f; }
+    float getRowPan(int, int) const { return 0.0f; }
+
+    void setStageMode(int, BlockChain::StageMode) {}
+    BlockChain::StageMode getStageMode(int) const { return BlockChain::StageMode::dualMono; }
+
+    void appendEmptyStage() {}
+
 private:
     Graph mGraph;
 

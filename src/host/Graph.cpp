@@ -61,6 +61,22 @@ void Graph::addBlockNode(std::unique_ptr<BlockInstance> block, int col, int row)
     mNodes.push_back(std::move(node));
 }
 
+bool Graph::setBlockFor(const juce::String& uid, std::unique_ptr<BlockInstance> block)
+{
+    auto* node = findNode(uid);
+
+    if (node == nullptr || block == nullptr)
+        return false;
+
+    // Replacing an existing block frees the old one first.
+    freeBlockFor(uid);
+
+    node->block = block.get();
+    node->latencySamples = block->getLatencySamples();
+    mOwnedBlocks.push_back(std::move(block));
+    return true;
+}
+
 std::unique_ptr<BlockInstance> Graph::releaseBlock(const juce::String& uid)
 {
     auto* node = findNode(uid);

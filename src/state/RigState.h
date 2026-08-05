@@ -18,7 +18,10 @@ class BlockRigProcessor;
 /// (measured in P0). Restoring therefore verifies rather than assumes.
 namespace rigstate
 {
-inline constexpr int kSchemaVersion = 1;
+/// Bumped to 2 when the lane became a graph: Lane/Stage/Row -> Graph/Node/Wire.
+/// v1 documents migrate forward on load (state/RigMigration.h); nothing writes
+/// v1 any more.
+inline constexpr int kSchemaVersion = 2;
 
 namespace ids
 {

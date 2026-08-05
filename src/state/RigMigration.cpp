@@ -183,8 +183,24 @@ juce::ValueTree migrate_1_to_2(const juce::ValueTree& rigV1)
                     if (! block.hasType(ids::block))
                         continue;
 
-                    const auto uid = block.getProperty(ids::blockUid).toString();
-                    graph.appendChild(blockToNode(block, col, rowIndex), nullptr);
+                    auto uid = block.getProperty(ids::blockUid).toString();
+
+                    // A block with no uid would be dropped by the loader, which
+                    // skips uid-less nodes — the rig would come back one block
+                    // short with nothing said about it. Every rig this app wrote
+                    // has uids, but a hand-edited or truncated file may not, and
+                    // losing someone's block in silence is not an acceptable
+                    // answer to a missing attribute. Mint one instead.
+                    auto node = blockToNode(block, col, rowIndex);
+
+                    if (uid.isEmpty())
+                    {
+                        uid = mintUid(graph, "block_" + juce::String(col) + "_"
+                                                 + juce::String(rowIndex));
+                        node.setProperty(ids::blockUid, uid, nullptr);
+                    }
+
+                    graph.appendChild(node, nullptr);
 
                     if (previous.isEmpty())
                     {
@@ -243,17 +259,36 @@ juce::ValueTree migrateToCurrent(const juce::ValueTree& rig)
         return {};
 
     auto current = rig.createCopy();
-    int version = static_cast<int>(current.getProperty(ids::schemaVersion, 0));
+    const int version = static_cast<int>(current.getProperty(ids::schemaVersion, 0));
 
     if (version > 2)
         return {}; // made in a newer BlockRig
 
-    if (version <= 1)
+    // Migrate on *shape*, not only on the version number. A document carrying a
+    // <Lane> needs converting whatever it claims to be, and one that already has
+    // a <Graph> is done whatever it claims to be.
+    //
+    // Trusting the number alone breaks on a file whose version was stamped
+    // wrongly — by a hand edit, a bad merge, or a tool that bumped the attribute
+    // without converting the body. The failure is nasty out of proportion to the
+    // cause: the loader finds no <Graph>, reports the whole rig unreadable, and
+    // the blocks are still sitting there in the file. Reading what is actually
+    // present costs one lookup.
+    const bool hasGraph = current.getChildWithName(ids::graph).isValid();
+    const bool hasLane = current.getChildWithName(ids::lane).isValid();
+
+    if (! hasGraph && hasLane)
+        return migrate_1_to_2(current);
+
+    if (! hasGraph && ! hasLane)
     {
-        current = migrate_1_to_2(current);
-        version = 2;
+        // Neither shape: an empty or minimal document. Give it an empty graph so
+        // the loader has something valid to work with rather than erroring on a
+        // rig that simply has no blocks yet.
+        return migrate_1_to_2(current);
     }
 
+    current.setProperty(ids::schemaVersion, 2, nullptr);
     return current;
 }
 

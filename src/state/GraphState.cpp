@@ -9,7 +9,7 @@ namespace graphstate
 namespace ids = rigstate::ids;
 
 juce::ValueTree toValueTree(const Graph& graph,
-                            const std::function<juce::ValueTree(const BlockInstance&)>& describeBlock)
+                            const std::function<juce::ValueTree(BlockInstance&)>& describeBlock)
 {
     juce::ValueTree tree(ids::graph);
 
