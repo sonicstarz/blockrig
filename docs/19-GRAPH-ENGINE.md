@@ -166,6 +166,38 @@ category chips, amber wires, names beneath), new interaction model.
 - `dsp_tests` / `chain_tests` stay green until the cutover phase, then
   `chain_tests` is superseded by `graph_tests` covering the same guarantees.
 
+## 5b. Verified live (2026-08-04)
+
+Run against the real machine, not the harness:
+
+- `--chain-check NAM,Utility` builds a graph, negotiates 1 in / 2 out fed MONO
+  for both blocks, and a hard-left Utility pan yields L 0.126 / R 0.000. The
+  engine renders correctly outside the tests.
+- The real `LastSession` rig (v1, `<Lane>`) migrated on launch and was re-saved
+  as v2 with 15 nodes and 16 wires.
+- `NEW NEW.blockrig` — 14 blocks including TAL-Chorus-LX, ValhallaDelay and
+  ValhallaVintageVerb — migrated from v1 and restored with **no missing
+  plug-ins**. That is the migration-fidelity item from the risk register, met
+  for the harder of the two named rigs.
+
+Two things that run surfaced, both open:
+
+- **`--chain-check`'s width probe now lies on a graph.** It walks `getBlocks()`
+  and feeds each block the previous one's output, which is a linear-chain
+  assumption. On a branched graph that is not the signal path, so its trailing
+  blocks read 0.00000 and its per-block width column is not trustworthy. The
+  probe needs to walk the compiled plan's steps instead. Until it does, treat
+  its width table as unreliable rather than as evidence — a diagnostic that
+  lies is worse than none, and this one is quoted in the build plan as ground
+  truth.
+- **Migrated dualMono Utilities report MONO-ONLY when fed mono.** A branch's
+  Utility negotiated mono-in/mono-out, and a hard pan on a mono-only block has
+  no second channel to place the signal in — so the dual-amp stereo image the
+  migration exists to preserve may not be reproduced. Unresolved: the probe
+  above cannot answer it, and it needs listening to a migrated dual-amp rig.
+  If confirmed, the fix is for the migration's Utility to negotiate stereo-out
+  explicitly rather than inheriting mono from its feed.
+
 ## 6. Phases
 
 - **G1 — Graph core.** Graph model + compiler (topo, buffer pool, sums, width,
