@@ -28,8 +28,12 @@ state.
 | P11 Spillover | Partly built — snapshot ducking + per-block tails ring out; rig-switch spillover not built |
 | P12 Ship (signing, notarization, DMG) | Not started |
 
-Beyond v1: [docs/19-GRAPH-ENGINE.md](docs/19-GRAPH-ENGINE.md) plans replacing the lane/stage model
-with free-form routing on a snapping patch canvas — **planned 2026-08-02, no code yet.**
+Beyond v1: [docs/19-GRAPH-ENGINE.md](docs/19-GRAPH-ENGINE.md) replaces the lane/stage model with
+free-form routing on a snapping patch canvas. **The engine is built and live (G1-G2, 2026-08-04):**
+rigs are a DAG of nodes and wires, latency aligns at every merge, removed blocks ring out through
+whatever they fed, and rigs save as `schemaVersion` 2 with v1 files migrating on load. The patch
+canvas and its gestures (G3-G5) are still to come — until then the lane UI drives the graph through
+a transitional projection.
 
 ## Documents (read in order for the current product)
 

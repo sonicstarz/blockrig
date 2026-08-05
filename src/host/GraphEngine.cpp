@@ -28,6 +28,24 @@ void GraphEngine::prepare(double sampleRate, int maxBlockSize)
 void GraphEngine::release()
 {
     mPrepared = false;
+
+    // Audio has stopped, so tails can never finish counting down: their windows
+    // are decremented by the audio thread, and collectGarbage only frees a tail
+    // once a plan retirement has been observed after it left the graph. Without
+    // this they would sit held until the engine was destroyed — closing an audio
+    // device mid-ring would strand every block that happened to be tailing.
+    //
+    // Safe to reclaim here: releaseResources is called after the host has
+    // stopped the audio thread, so nothing is rendering these.
+    for (auto& tail : mTails)
+        if (auto* node = mGraph.findNode(tail->uid))
+        {
+            node->tailSamplesLeft = nullptr;
+            mGraph.removeNode(tail->uid);
+        }
+
+    mTails.clear();
+    mExpiredTails.clear();
 }
 
 void GraphEngine::clear()
@@ -102,6 +120,82 @@ void GraphEngine::moveBlock(const juce::String& uid, BlockPosition position)
         prepareGraph(false);
         publish();
     }
+}
+
+namespace
+{
+/// Finds a plug-in parameter by its APVTS id. Built-in blocks declare stable
+/// ids ("gain", "pan"), which is what lets the lane's row controls reach the
+/// Utility block that now carries those values.
+juce::RangedAudioParameter* parameterWithId(BlockInstance* block, const juce::String& id)
+{
+    if (block == nullptr)
+        return nullptr;
+
+    auto* plugin = block->getPlugin();
+
+    if (plugin == nullptr)
+        return nullptr;
+
+    for (auto* parameter : plugin->getParameters())
+        if (auto* withId = dynamic_cast<juce::RangedAudioParameter*>(parameter))
+            if (withId->paramID == id)
+                return withId;
+
+    return nullptr;
+}
+
+/// The block a lane row's gain/pan controls should act on: the first block in
+/// that cell that actually exposes them. For a migrated dualMono split that is
+/// the Utility node the migration minted at the head of the branch.
+BlockInstance* rowControlBlock(const std::vector<BlockInstance*>& blocks, const juce::String& id)
+{
+    for (auto* block : blocks)
+        if (parameterWithId(block, id) != nullptr)
+            return block;
+
+    return nullptr;
+}
+
+void setParameter(juce::RangedAudioParameter* parameter, float value)
+{
+    if (parameter != nullptr)
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(value));
+}
+
+float getParameter(juce::RangedAudioParameter* parameter, float fallback)
+{
+    return parameter != nullptr ? parameter->convertFrom0to1(parameter->getValue()) : fallback;
+}
+} // namespace
+
+void GraphEngine::setRowGainDb(int stage, int row, float gainDb)
+{
+    setParameter(parameterWithId(rowControlBlock(getBlocksInRow(stage, row), "gain"), "gain"),
+                 gainDb);
+}
+
+void GraphEngine::setRowPan(int stage, int row, float pan)
+{
+    setParameter(parameterWithId(rowControlBlock(getBlocksInRow(stage, row), "pan"), "pan"), pan);
+}
+
+float GraphEngine::getRowGainDb(int stage, int row) const
+{
+    auto blocks = const_cast<GraphEngine*>(this)->getBlocksInRow(stage, row);
+    return getParameter(parameterWithId(rowControlBlock(blocks, "gain"), "gain"), 0.0f);
+}
+
+float GraphEngine::getRowPan(int stage, int row) const
+{
+    auto blocks = const_cast<GraphEngine*>(this)->getBlocksInRow(stage, row);
+    return getParameter(parameterWithId(rowControlBlock(blocks, "pan"), "pan"), 0.0f);
+}
+
+bool GraphEngine::rowHasControls(int stage, int row) const
+{
+    auto blocks = const_cast<GraphEngine*>(this)->getBlocksInRow(stage, row);
+    return rowControlBlock(blocks, "gain") != nullptr;
 }
 
 void GraphEngine::setSourceIsMono(bool sourceIsMono)

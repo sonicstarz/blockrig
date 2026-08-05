@@ -1866,15 +1866,22 @@ void MainView::showIoPanel(EndBlock::Kind kind)
 
 int MainView::firstSplitStage() const
 {
-    // Disabled for the graph transition. The Split A/B panel edits row gain, row
-    // pan and stage mode, and on a graph those are not properties of a row —
-    // they are a Utility block on the branch. Migrated rigs keep their sound
-    // because migrate_1_to_2 mints exactly that block; what is missing is an
-    // editor for it, which the canvas provides at G4.
+    const auto& chain = mProcessor.getChain();
+
+    // Only offer the panel for a split whose rows actually carry controls the
+    // panel can move. On a graph, row gain and pan live on a Utility block on
+    // the branch — the one migrate_1_to_2 mints for a dualMono split — so a
+    // branch without one has nothing for those sliders to act on.
     //
-    // Returning -1 greys the menu item out. A panel whose sliders moved but
-    // changed nothing audible would be worse than one you cannot open: the
-    // first is a bug you chase, the second is a feature you can see is absent.
+    // Enabling the item regardless would give you a panel whose sliders move
+    // and change nothing audible, which is worse than a greyed-out item: the
+    // first is a bug you chase, the second is a limit you can see.
+    for (int stage = 0; stage < chain.getNumStages(); ++stage)
+        if (chain.isStageSplit(stage))
+            for (int row = 0; row < chain.getNumRows(stage); ++row)
+                if (chain.rowHasControls(stage, row))
+                    return stage;
+
     return -1;
 }
 

@@ -1451,6 +1451,45 @@ void testRemovalRingsOut()
     check(instant.getGraph().findNode("verb") == nullptr, "and the node is gone");
 }
 
+void testReleaseReclaimsTails()
+{
+    std::printf("\nStopping audio mid-ring reclaims the tail\n");
+
+    DeathWatch::destroyed = 0;
+
+    {
+        GraphEngine engine;
+        auto& graph = engine.getGraph();
+
+        auto plugin = std::make_unique<WatchedPlugin>();
+        auto block = std::make_unique<BlockInstance>(std::move(plugin), "verb");
+        block->prepare(kSampleRate, kBlockSize, false);
+        graph.addBlockNode(std::move(block), 1, 0);
+
+        GraphWire in;
+        in.fromUid = kInputNodeUid;
+        in.toUid = "verb";
+        graph.addWire(in);
+
+        GraphWire out;
+        out.fromUid = "verb";
+        out.toUid = kOutputNodeUid;
+        graph.addWire(out);
+
+        engine.prepare(kSampleRate, kBlockSize);
+
+        // A long tail, then the device closes before it can finish.
+        engine.retireWithTail("verb", 30.0);
+        check(engine.getNumTailingBlocks() == 1, "the block is ringing out");
+        check(DeathWatch::destroyed == 0, "and still alive");
+
+        engine.release();
+
+        check(engine.getNumTailingBlocks() == 0, "release() reclaims it");
+        check(DeathWatch::destroyed == 1, "and frees it, rather than holding it forever");
+    }
+}
+
 void testLatencyRefresh()
 {
     std::printf("\nLatency refresh republishes only when something moved\n");
@@ -1511,6 +1550,7 @@ int main()
     testPlanRetirementDoesNotStrandPlans();
     testOversizedBlockIsRefused();
     testRemovalRingsOut();
+    testReleaseReclaimsTails();
     testLatencyRefresh();
 
     std::printf("\n%s (%d failure%s)\n",
