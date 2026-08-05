@@ -1285,6 +1285,172 @@ void testLaneCompatibleSurface()
     check(engine.getNumStages() == 0, "and the lane sees no stages");
 }
 
+void testPlanRetirementDoesNotStrandPlans()
+{
+    std::printf("\nPlan retirement never strands a plan\n");
+
+    // Publish repeatedly without draining, which is what a drag does: many edits
+    // between two collectGarbage() calls. If adoption took a plan while the
+    // retirement slot was still full, the outgoing plan would be stranded with
+    // nothing pointing at it - a whole RenderPlan leaked per swap, buffer pool
+    // and delay lines included.
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    graph.addBlockNode(makeBlockFor("a"), 1, 0);
+
+    GraphWire in;
+    in.fromUid = kInputNodeUid;
+    in.toUid = "a";
+    graph.addWire(in);
+
+    GraphWire out;
+    out.fromUid = "a";
+    out.toUid = kOutputNodeUid;
+    graph.addWire(out);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    // Deliberately never collect between rounds.
+    for (int round = 0; round < 50; ++round)
+    {
+        engine.publish();
+        engine.process(buffer, midi);
+    }
+
+    engine.collectGarbage();
+
+    // Audio still flows, and the engine is still coherent afterwards.
+    for (int i = 0; i < kBlockSize; ++i)
+        buffer.setSample(0, i, 0.5f);
+
+    engine.process(buffer, midi);
+    check(buffer.getMagnitude(0, kBlockSize) > 0.4f, "audio survives 50 undrained publishes");
+    check(engine.getNumBlocks() == 1, "the graph is intact");
+}
+
+void testOversizedBlockIsRefused()
+{
+    std::printf("\nAn oversized block is refused, not written past the pool\n");
+
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    graph.addBlockNode(makeBlockFor("a"), 1, 0);
+
+    GraphWire in;
+    in.fromUid = kInputNodeUid;
+    in.toUid = "a";
+    graph.addWire(in);
+
+    GraphWire out;
+    out.fromUid = "a";
+    out.toUid = kOutputNodeUid;
+    graph.addWire(out);
+
+    engine.prepare(kSampleRate, kBlockSize);
+    engine.clearDropoutCount();
+
+    // Twice what was promised at prepare time.
+    juce::AudioBuffer<float> oversized(2, kBlockSize * 2);
+    juce::MidiBuffer midi;
+
+    for (int i = 0; i < oversized.getNumSamples(); ++i)
+        oversized.setSample(0, i, 0.5f);
+
+    engine.process(oversized, midi);
+
+    check(oversized.getMagnitude(0, oversized.getNumSamples()) < 1.0e-6f,
+          "the block is silenced rather than overrunning the pool");
+    check(engine.getDropoutCount() == 1, "and counted as a dropout so the meter shows it");
+
+    // A normal block still works afterwards.
+    juce::AudioBuffer<float> normal(2, kBlockSize);
+
+    for (int i = 0; i < kBlockSize; ++i)
+        normal.setSample(0, i, 0.5f);
+
+    engine.process(normal, midi);
+    check(normal.getMagnitude(0, kBlockSize) > 0.4f, "and the engine recovers on the next block");
+}
+
+void testRemovalRingsOut()
+{
+    std::printf("\nRemoving a block through the engine rings out\n");
+
+    // The regression guard the cutover needed and did not have: the lane rang
+    // tails out inside its own removeBlock, so a graph engine that deleted the
+    // block outright would drop spillover entirely with every test still green.
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    graph.addBlockNode(makeBlockFor("verb", 256), 1, 0);
+
+    GraphWire in;
+    in.fromUid = kInputNodeUid;
+    in.toUid = "verb";
+    graph.addWire(in);
+
+    GraphWire out;
+    out.fromUid = "verb";
+    out.toUid = kOutputNodeUid;
+    graph.addWire(out);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+
+    // Prime the block with signal it can ring out.
+    for (int i = 0; i < kBlockSize; ++i)
+    {
+        buffer.setSample(0, i, 0.5f);
+        buffer.setSample(1, i, 0.5f);
+    }
+
+    engine.process(buffer, midi);
+
+    engine.removeBlock("verb");
+    check(engine.getNumTailingBlocks() == 1, "the removed block is ringing out, not deleted");
+
+    // Silence in; what comes out is tail.
+    float peak = 0.0f;
+
+    for (int block = 0; block < 3; ++block)
+    {
+        buffer.clear();
+        engine.process(buffer, midi);
+        peak = juce::jmax(peak, buffer.getMagnitude(0, kBlockSize));
+    }
+
+    check(peak > 0.4f, "and its tail is audible after removal");
+
+    // With the tail disabled, removal is immediate — the opt-out still works.
+    GraphEngine instant;
+    auto& instantGraph = instant.getGraph();
+    instantGraph.addBlockNode(makeBlockFor("verb", 256), 1, 0);
+
+    GraphWire in2;
+    in2.fromUid = kInputNodeUid;
+    in2.toUid = "verb";
+    instantGraph.addWire(in2);
+
+    GraphWire out2;
+    out2.fromUid = "verb";
+    out2.toUid = kOutputNodeUid;
+    instantGraph.addWire(out2);
+
+    instant.prepare(kSampleRate, kBlockSize);
+    instant.setTailCarrySeconds(0.0);
+    instant.removeBlock("verb");
+
+    check(instant.getNumTailingBlocks() == 0, "tail carry of 0 removes immediately");
+    check(instant.getGraph().findNode("verb") == nullptr, "and the node is gone");
+}
+
 void testLatencyRefresh()
 {
     std::printf("\nLatency refresh republishes only when something moved\n");
@@ -1342,6 +1508,9 @@ int main()
     testWidthPropagation();
     testWidthMergeRule();
     testLaneCompatibleSurface();
+    testPlanRetirementDoesNotStrandPlans();
+    testOversizedBlockIsRefused();
+    testRemovalRingsOut();
     testLatencyRefresh();
 
     std::printf("\n%s (%d failure%s)\n",

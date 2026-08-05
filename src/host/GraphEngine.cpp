@@ -68,6 +68,24 @@ void GraphEngine::insertBlock(std::unique_ptr<BlockInstance> block, BlockPositio
 
 void GraphEngine::removeBlock(const juce::String& uid)
 {
+    // Removal rings out. The lane did this inside its own removeBlock, so
+    // deleting the block outright here would have quietly dropped spillover —
+    // the one feature P11 exists for — while every test still passed, because
+    // nothing asserts that removing a reverb leaves a tail behind.
+    const auto* node = mGraph.findNode(uid);
+    const bool canTail = node != nullptr && node->block != nullptr && mTailCarrySeconds > 0.0;
+
+    if (canTail)
+    {
+        if (retireWithTail(uid, mTailCarrySeconds))
+        {
+            prepareGraph(false);
+            publish();
+        }
+
+        return;
+    }
+
     if (graphlane::removeBlock(mGraph, uid))
     {
         prepareGraph(false);
@@ -380,30 +398,52 @@ void GraphEngine::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& mi
 {
     // Adopt a new plan if one is waiting. The plan we were running goes to the
     // retirement slot for the message thread to free.
-    if (auto* incoming = mPendingPlan.exchange(nullptr, std::memory_order_acq_rel))
+    // Adopt a new plan only when there is somewhere to put the old one. Taking
+    // the pending plan while the retirement slot is still full would strand the
+    // outgoing plan: nothing would point at it, and it could never be freed —
+    // a leak of a whole RenderPlan, buffer pool and delay lines included, on
+    // every swap during a drag.
+    //
+    // Leaving the plan pending is safe and self-correcting. publish() replaces
+    // a superseded pending plan on the message thread, so waiting a block costs
+    // at most one block of staleness and never a lost edit.
+    if (mRetiredPlan.load(std::memory_order_acquire) == nullptr)
     {
-        if (mActivePlan != nullptr)
+        if (auto* incoming = mPendingPlan.exchange(nullptr, std::memory_order_acq_rel))
         {
-            if (auto* alreadyRetired = mRetiredPlan.exchange(mActivePlan, std::memory_order_acq_rel))
-            {
-                // The message thread has not drained yet and we cannot free on
-                // this thread. Put it back and let the newer one wait a block.
-                mRetiredPlan.store(alreadyRetired, std::memory_order_release);
-            }
-        }
+            if (mActivePlan != nullptr)
+                mRetiredPlan.store(mActivePlan, std::memory_order_release);
 
-        mActivePlan = incoming;
+            mActivePlan = incoming;
+        }
     }
 
     if (mActivePlan == nullptr || mActivePlan->steps.empty())
         return;
 
     const int numSamples = buffer.getNumSamples();
+
+    auto& plan = *mActivePlan;
+
+    // The pool was sized for maxBlockSize at compile time and cannot grow here.
+    // A host that hands us a larger block than it promised — a device change
+    // that skips prepareToPlay, a plug-in host with a looser contract — would
+    // otherwise write straight past the end of every pool buffer and delay line.
+    //
+    // Silence for one block is a bad outcome; heap corruption on the audio
+    // thread is a far worse one, and it would present as a crash nowhere near
+    // the cause. Count it as a dropout so it shows in the meter rather than
+    // passing unnoticed.
+    if (! plan.buffers.empty() && numSamples > plan.buffers.front().getNumSamples())
+    {
+        buffer.clear();
+        mDropouts.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
     const double bufferDuration = mSampleRate > 0.0 ? numSamples / mSampleRate : 0.0;
 
     const auto start = juce::Time::getHighResolutionTicks();
-
-    auto& plan = *mActivePlan;
 
     for (auto& step : plan.steps)
     {

@@ -89,6 +89,12 @@ public:
     /// track lifetimes across the tail window.
     bool retireWithTail(const juce::String& uid, double seconds);
 
+    /// Seconds a removed block keeps rendering, silence-fed, so its delay or
+    /// reverb tail rings out instead of cutting dead. 0 disables. Matches the
+    /// lane's default so removal behaves as it always has.
+    void setTailCarrySeconds(double seconds) { mTailCarrySeconds = seconds; }
+    double getTailCarrySeconds() const noexcept { return mTailCarrySeconds; }
+
     /// How many blocks are currently ringing out. For the CPU meter, which has
     /// to be honest that a tail costs real work.
     int getNumTailingBlocks() const noexcept { return static_cast<int>(mTails.size()); }
@@ -167,6 +173,7 @@ private:
     int mMaxBlockSize = 512;
     bool mPrepared = false;
     bool mSourceIsMono = false;
+    double mTailCarrySeconds = 4.0;
     juce::AudioPlayHead* mPlayHead = nullptr;
 
     /// Walks the graph in topological order, calling `visit(block, monoIn)` for
