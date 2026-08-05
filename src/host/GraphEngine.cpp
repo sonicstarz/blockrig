@@ -22,6 +22,18 @@ void GraphEngine::prepare(double sampleRate, int maxBlockSize)
     mMaxBlockSize = maxBlockSize;
     mPrepared = true;
 
+    // Every block, unconditionally. Blocks can arrive before the device starts —
+    // restoring a session does exactly that, adding the whole rig and only then
+    // getting a sample rate — and prepareGraph() is a no-op while unprepared, so
+    // those blocks are still sitting there uninitialised at this point. Handing
+    // one to the audio thread means processBlock() writing through pointers its
+    // plug-in never allocated.
+    //
+    // `true` rather than `false` because the sample rate or block size may have
+    // changed since the last prepare, which invalidates every block's buffers
+    // whatever their negotiated width says.
+    prepareGraph(true);
+
     publish();
 }
 

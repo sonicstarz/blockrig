@@ -163,6 +163,13 @@ juce_add_gui_app(BlockRigApp
     # a terminal, which inherits that terminal's permission.
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "BlockRig needs audio input to process your guitar."
+    # macOS window restoration is actively harmful here. After any abnormal exit
+    # it puts up a modal "reopen windows?" alert during launch, before the app's
+    # own code finishes initialising - so the app appears frozen, and the
+    # headless diagnostics (--scan, --chain-check) hang forever with no output
+    # because the message loop never reaches them. Nothing in BlockRig benefits
+    # from restoring windows: the rig file carries the session.
+    PLIST_TO_MERGE "<plist version=\"1.0\"><dict><key>NSQuitAlwaysKeepsWindows</key><false/></dict></plist>"
     ICON_BIG "")
 
 target_sources(BlockRigApp PRIVATE

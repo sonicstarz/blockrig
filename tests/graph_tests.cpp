@@ -1490,6 +1490,46 @@ void testReleaseReclaimsTails()
     }
 }
 
+void testBlocksAddedBeforePrepare()
+{
+    std::printf("\nBlocks added before the device starts are still prepared\n");
+
+    // The order the live app uses and every other test here does not: build the
+    // rig first, get a sample rate second. Session restore does exactly this.
+    // A block left unprepared reaches the audio thread with buffers its plug-in
+    // never allocated, and processBlock writes through a null pointer.
+    //
+    // Found by running the app, not by testing it — every test above prepares
+    // its blocks by hand before adding them, which is precisely why they all
+    // passed while the real path crashed on launch.
+    GraphEngine engine;
+    auto& graph = engine.getGraph();
+
+    // Deliberately NOT prepared here.
+    auto plugin = std::make_unique<DelayPlugin>(0, false);
+    auto block = std::make_unique<BlockInstance>(std::move(plugin), "late");
+    check(! block->hasBeenPrepared(), "the block starts unprepared");
+    graph.addBlockNode(std::move(block), 1, 0);
+
+    GraphWire in;
+    in.fromUid = kInputNodeUid;
+    in.toUid = "late";
+    graph.addWire(in);
+
+    GraphWire out;
+    out.fromUid = "late";
+    out.toUid = kOutputNodeUid;
+    graph.addWire(out);
+
+    engine.prepare(kSampleRate, kBlockSize);
+
+    check(graph.getBlockByUid("late")->hasBeenPrepared(),
+          "prepare() prepares blocks that were already in the graph");
+
+    // And it actually renders rather than faulting.
+    check(peakAfterPriming(engine, 4, 0) > 0.1f, "audio flows through it");
+}
+
 void testLatencyRefresh()
 {
     std::printf("\nLatency refresh republishes only when something moved\n");
@@ -1551,6 +1591,7 @@ int main()
     testOversizedBlockIsRefused();
     testRemovalRingsOut();
     testReleaseReclaimsTails();
+    testBlocksAddedBeforePrepare();
     testLatencyRefresh();
 
     std::printf("\n%s (%d failure%s)\n",
